@@ -1,3 +1,4 @@
+```
 CUDA-Parallel-Monte-Carlo-Criticality-Calculation/
 ├── include/
 │   ├── sim.cuh          # struct definitions, constants, function declarations
@@ -11,3 +12,4 @@ CUDA-Parallel-Monte-Carlo-Criticality-Calculation/
 ├── Makefile
 └── results/
     └── keff_history.csv
+```
