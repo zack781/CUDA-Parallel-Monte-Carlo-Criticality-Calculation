@@ -1,40 +1,146 @@
-#include <stdio.h>
-#include <cuda.h>
+#ifndef SIM_CUH
+#define SIM_CUH
 
-// #include "common.h"
+#include <cuda_runtime.h>
 
-float Neutrons_Produced = 0;
-interaction_point_x = []
-interaction_point_y = []
-float FuelSurfNeuNum = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
-float CladSurfNeuNum = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+constexpr int NUM_GROUPS = 10;
+constexpr int NUM_REGIONS = 3;
+constexpr int NUM_SURFACES = 8;
 
-Group_Energy = [
-    3e+1, 3e+0, 3e-1, 3e-2, 3e-3,
-    3e-4, 3e-5, 3e-6, 3e-7, 3e-8
-]
+constexpr float GROUP_ENERGY[NUM_GROUPS] = {
+    3.0e+1f, 3.0e+0f, 3.0e-1f, 3.0e-2f, 3.0e-3f,
+    3.0e-4f, 3.0e-5f, 3.0e-6f, 3.0e-7f, 3.0e-8f
+};
 
-float Fission    = 0;
-float nu         = 0;
-float Capture    = 0;
-float Absorption = 0;
-float Scattering = 0;
-float Leakage    = 0;
+struct Geometry {
+    float r_fuel;
+    float r_clad_in;
+    float r_clad_out;
+    float pitch;
+};
 
-// =========================================================
-//                         Geometry
-// =========================================================
-float r_fuel     = 0.53;  // Fuel radius (cm)
-float r_clad_in  = 0.53;  // Cladding inner radius (cm)
-float r_clad_out = 0.90;  // Cladding outer radius (cm)
-float pitch      = 1.837;  // Cell pitch (cm)
-float t_clad     = r_clad_out - r_clad_in;
+constexpr Geometry DEFAULT_GEOMETRY = {
+    0.53f,
+    0.53f,
+    0.90f,
+    1.837f
+};
 
+enum Region {
+    FUEL = 0,
+    CLAD = 1,
+    MODERATOR = 2
+};
 
+enum EventType {
+    EVENT_COLLISION = 0,
+    EVENT_BOUNDARY = 1,
+    EVENT_DEAD = 2
+};
+
+enum SurfaceId {
+    SURFACE_FUEL = 0,
+    SURFACE_CLAD_INNER = 1,
+    SURFACE_CLAD_OUTER = 2,
+    SURFACE_X_MIN = 3,
+    SURFACE_X_MAX = 4,
+    SURFACE_Y_MIN = 5,
+    SURFACE_Y_MAX = 6,
+    SURFACE_NONE = 7
+};
+
+enum ReactionType {
+    REACTION_FISSION = 0,
+    REACTION_CAPTURE = 1,
+    REACTION_SCATTER = 2,
+    REACTION_NONE = 3
+};
+
+struct Neutron {
+    float x;
+    float y;
+    float energy;
+    float ux;
+    float uy;
+    int region;
+};
+
+struct CrossSections {
+    float fission;
+    float capture;
+    float scattering;
+    float total;
+};
+
+struct BoundaryHit {
+    float distance;
+    SurfaceId surface;
+};
+
+struct Event {
+    EventType type;
+    float distance;
+    SurfaceId surface;
+    ReactionType reaction;
+};
+
+struct Tallies {
+    unsigned long long fission;
+    unsigned long long capture;
+    unsigned long long scattering;
+    unsigned long long leakage;
+    unsigned long long neutrons_produced;
+};
+
+struct SurfaceTallies {
+    unsigned int fuel[NUM_GROUPS];
+    unsigned int clad[NUM_GROUPS];
+};
+
+struct HistoryTallies {
+    unsigned int fission;
+    unsigned int capture;
+    unsigned int scattering;
+    unsigned int leakage;
+    unsigned int neutrons_produced;
+    unsigned int fuel_surface[NUM_GROUPS];
+    unsigned int clad_surface[NUM_GROUPS];
+};
+
+__device__ float random_uniform(unsigned int *state);
+
+__device__ void sample_isotropic_direction(unsigned int *state, float *ux, float *uy);
 
 __global__ void init_rng_kernel();
 
-__global__ void transport_kernel();
+__global__ void move_kernel(
+    const Neutron *move_queue,
+    int move_count,
+    Neutron *next_move_queue,
+    int *next_move_count,
+    Neutron *collision_queue,
+    int *collision_count,
+    HistoryTallies *history_tallies
+);
+
+__global__ void collision_kernel(
+    const Neutron *collision_queue,
+    int collision_count,
+    Neutron *move_queue,
+    int *move_count,
+    Neutron *fission_bank,
+    int fission_bank_capacity,
+    int *fission_bank_count,
+    HistoryTallies *history_tallies
+);
+
+__global__ void compact_queue_kernel(
+    const Neutron *input_queue,
+    const int *keep_flags,
+    const int *output_offsets,
+    int input_count,
+    Neutron *output_queue
+);
 
 __global__ void normalize_bank_kernel();
 
@@ -44,7 +150,6 @@ __global__ void resample_kernel();
 
 __global__ void initialize_source_kernel();
 
-// main.cu
-float compute_shannon_entropy(int* bins, int M);
+float compute_shannon_entropy(int *bins, int count);
 
-
+#endif
