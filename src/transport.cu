@@ -16,45 +16,6 @@ __device__ int get_energy_group(float energy)
 
 __device__ CrossSections get_cross_sections(float energy, int region)
 {
-    constexpr float SIGMA_F[NUM_GROUPS][NUM_REGIONS] = {
-        {1.05e-1f, 0.0f, 0.0f},
-        {5.96e-2f, 0.0f, 0.0f},
-        {6.02e-2f, 0.0f, 0.0f},
-        {1.06e-1f, 0.0f, 0.0f},
-        {2.46e-1f, 0.0f, 0.0f},
-        {2.50e-1f, 0.0f, 0.0f},
-        {1.07e-1f, 0.0f, 0.0f},
-        {1.28e+0f, 0.0f, 0.0f},
-        {9.30e+0f, 0.0f, 0.0f},
-        {2.58e+1f, 0.0f, 0.0f}
-    };
-
-    constexpr float SIGMA_C[NUM_GROUPS][NUM_REGIONS] = {
-        {1.41e-6f, 1.71e-2f, 3.34e-6f},
-        {1.34e-3f, 7.83e-3f, 3.34e-6f},
-        {1.10e-2f, 2.83e-4f, 2.56e-7f},
-        {3.29e-2f, 4.52e-6f, 6.63e-7f},
-        {8.23e-2f, 1.06e-5f, 2.24e-7f},
-        {4.28e-2f, 4.39e-6f, 1.27e-7f},
-        {9.90e-2f, 1.25e-5f, 2.02e-7f},
-        {2.51e-1f, 3.98e-5f, 6.02e-7f},
-        {2.12e+0f, 1.26e-4f, 1.84e-6f},
-        {4.30e+0f, 3.95e-4f, 5.76e-6f}
-    };
-
-    constexpr float SIGMA_S[NUM_GROUPS][NUM_REGIONS] = {
-        {2.76e-1f, 1.44e-1f, 1.27e-2f},
-        {3.88e-1f, 1.76e-1f, 7.36e-2f},
-        {4.77e-1f, 3.44e-1f, 2.65e-1f},
-        {6.88e-1f, 2.66e-1f, 5.72e-1f},
-        {9.38e-1f, 2.06e-1f, 6.69e-1f},
-        {1.52e+0f, 2.14e-1f, 6.81e-1f},
-        {2.30e+0f, 2.23e-1f, 6.82e-1f},
-        {2.45e+0f, 2.31e-1f, 6.83e-1f},
-        {9.79e+0f, 2.40e-1f, 6.86e-1f},
-        {4.36e+1f, 2.41e-1f, 6.91e-1f}
-    };
-
     int group = get_energy_group(energy);
     int material = region;
     if (material < 0 || material >= NUM_REGIONS) {
