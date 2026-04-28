@@ -1,4 +1,4 @@
-#include "../include/sim.cuh"
+#include "include/sim.cuh"
 #include <curand_kernel.h>
 #include <math.h>
 
