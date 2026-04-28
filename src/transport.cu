@@ -33,7 +33,7 @@ __device__ CrossSections get_cross_sections(float energy, int region) {
 
 __global__ void move_kernel(
     const Neutron *move_queue,
-    int move_count,
+    int *move_count,
     Neutron *next_move_queue,
     int *next_move_count,
     Neutron *collision_queue,
@@ -49,7 +49,7 @@ __global__ void move_kernel(
     float E = neutron.Energy;
     int region = neutron.region;
 
-    XS xs = CrossSections(E, region);
+    XS xs = get_cross_sections(E, region);
 
     float sig_f = xs.sig_f;
     float sig_c = xs.sig_c;
@@ -71,7 +71,7 @@ __global__ void move_kernel(
 
     float a = 1.0;
     float b = 2.0f * (neutron.x * ux + neutron.y * uy);
-    float x = neutron.x * neutron.x + neutron.y * neutron.y - r_fuel * r_fuel;
+    float c = neutron.x * neutron.x + neutron.y * neutron.y - r_fuel * r_fuel;
     float delta = b * b - 4.0f * a * c;
 
     float dmin = INFINITY;
