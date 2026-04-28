@@ -153,6 +153,7 @@ __global__ void collision_kernel(const Neutron *collision_queue,
                                  int fission_bank_capacity,
                                  int *fission_bank_count,
                                  HistoryTallies *history_tallies,
+                                 Tallies *global_tallies,
                                  curandState *rng_states) {
   int i = blockIdx.x * blockDim.x + threadIdx.x;
   if (i >= collision_count)
@@ -270,6 +271,21 @@ __global__ void collision_kernel(const Neutron *collision_queue,
     output_index = __shfl_sync(scatter_lane_mask, output_index, leader) + scatter_queue_offset;
 
     next_move_queue[output_index] = neutron;
+  }
+
+  if (local_tallies.fission != 0) {
+    atomicAdd(&global_tallies->fission,
+              static_cast<unsigned long long>(local_tallies.fission));
+    atomicAdd(&global_tallies->neutrons_produced,
+              static_cast<unsigned long long>(local_tallies.neutrons_produced));
+  }
+  if (local_tallies.capture != 0) {
+    atomicAdd(&global_tallies->capture,
+              static_cast<unsigned long long>(local_tallies.capture));
+  }
+  if (local_tallies.scattering != 0) {
+    atomicAdd(&global_tallies->scattering,
+              static_cast<unsigned long long>(local_tallies.scattering));
   }
 
   history_tallies[i] = local_tallies;

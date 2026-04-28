@@ -218,6 +218,7 @@ __global__ void collision_kernel(
     int fission_bank_capacity,
     int *fission_bank_count,
     HistoryTallies *history_tallies,
+    Tallies *global_tallies,
     curandState *rng_states
 );
 

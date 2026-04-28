@@ -13,17 +13,19 @@
 int main() {
     int N = Neutrons_Number;
     float r_fuel = FUEL_RADIUS;
+    int queue_capacity = N * 10;
 
     curandState *d_rng_states;
     Neutron *d_source_particles;
     cudaMalloc(&d_source_particles, N * sizeof(Neutron));
 
-    cudaMalloc(&d_rng_states, N * sizeof(curandState));
+    cudaMalloc(&d_rng_states, queue_capacity * sizeof(curandState));
 
     int threads = 256;
     int blocks = (N + threads - 1) / threads;
+    int capacity_blocks = (queue_capacity + threads - 1) / threads;
 
-    init_rng<<<blocks, threads>>>(d_rng_states, 1234UL, N);
+    init_rng<<<capacity_blocks, threads>>>(d_rng_states, 1234UL, queue_capacity);
 
     // Initialize
     Neutron *d_move_queue;
@@ -31,13 +33,16 @@ int main() {
     Neutron *d_collision_queue;
     Neutron *d_fission_bank;
     HistoryTallies *d_history_tallies;
+    Tallies *d_global_tallies;
 
-    cudaMalloc(&d_move_queue, N * sizeof(Neutron));
-    cudaMalloc(&d_next_move_queue, N * sizeof(Neutron));
-    cudaMalloc(&d_collision_queue, N * sizeof(Neutron));
-    int fission_bank_capacity = N * 10;
+    cudaMalloc(&d_move_queue, queue_capacity * sizeof(Neutron));
+    cudaMalloc(&d_next_move_queue, queue_capacity * sizeof(Neutron));
+    cudaMalloc(&d_collision_queue, queue_capacity * sizeof(Neutron));
+    int fission_bank_capacity = queue_capacity;
     cudaMalloc(&d_fission_bank, fission_bank_capacity * sizeof(Neutron));
-    cudaMalloc(&d_history_tallies, N * sizeof(HistoryTallies));
+    cudaMalloc(&d_history_tallies, queue_capacity * sizeof(HistoryTallies));
+    cudaMalloc(&d_global_tallies, sizeof(Tallies));
+    cudaMemset(d_global_tallies, 0, sizeof(Tallies));
 
     int *d_move_count, *d_next_move_count, *d_collision_count;
     cudaMalloc(&d_move_count, sizeof(int));
@@ -65,10 +70,11 @@ int main() {
     while (move_count > 0) {
         printf("move_count = %d\n", move_count);
         if (move_count > 0) {
+            int move_blocks = (move_count + threads - 1) / threads;
             int zero = 0;
             cudaMemcpy(d_next_move_count, &zero, sizeof(int), cudaMemcpyHostToDevice);
             cudaMemcpy(d_collision_count, &zero, sizeof(int), cudaMemcpyHostToDevice);
-            move_kernel<<<blocks, threads>>>(
+            move_kernel<<<move_blocks, threads>>>(
                 d_move_queue, d_move_count,
                 d_next_move_queue, d_next_move_count,
                 d_collision_queue, d_collision_count,
@@ -81,12 +87,14 @@ int main() {
         }
 
         if (collision_count > 0) {
-            collision_kernel<<<blocks, threads>>>(
+            int collision_blocks = (collision_count + threads - 1) / threads;
+            collision_kernel<<<collision_blocks, threads>>>(
                 d_collision_queue, collision_count,
                 d_next_move_queue, d_next_move_count,
                 d_fission_bank, fission_bank_capacity,
                 d_fission_bank_count,
                 d_history_tallies,
+                d_global_tallies,
                 d_rng_states
             );
             cudaDeviceSynchronize();
@@ -119,7 +127,30 @@ int main() {
         cudaMemcpy(d_collision_count, &zero, sizeof(int), cudaMemcpyHostToDevice);
     }
 
+    Tallies global_tallies = {};
+    cudaMemcpy(&global_tallies, d_global_tallies, sizeof(Tallies), cudaMemcpyDeviceToHost);
+
+    unsigned long long interactions =
+        global_tallies.scattering + global_tallies.capture + global_tallies.fission;
+    unsigned long long absorption = global_tallies.capture + global_tallies.fission;
+    double average_nu = global_tallies.fission > 0
+        ? static_cast<double>(global_tallies.neutrons_produced) /
+              static_cast<double>(global_tallies.fission)
+        : 0.0;
+
+    printf("Number of Neutrons.......................=  %d\n", N);
+    printf("Number of Interactions...................=  %llu\n", interactions);
+    printf("Number of Scattering Events..............=  %llu\n", global_tallies.scattering);
+    printf("Number of Capture Events.................=  %llu\n", global_tallies.capture);
+    printf("Number of Fission Events.................=  %llu\n", global_tallies.fission);
+    printf("Number of Absorption Events..............=  %llu\n", absorption);
+    printf("Average nu...............................=  %.6f\n", average_nu);
+    printf("Number of Neutrons Produced by Fission...=  %llu\n", global_tallies.neutrons_produced);
+    printf("Number of Neutrons Leaked from System....=  not tallied\n");
+    printf("Effective Multiplication Factor(keff)....=  not tallied\n");
+
     cudaFree(d_fission_bank_count);
+    cudaFree(d_global_tallies);
     cudaFree(d_fission_bank);
     cudaFree(d_history_tallies);
     cudaFree(d_collision_queue);
