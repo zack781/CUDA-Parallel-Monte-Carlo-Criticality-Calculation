@@ -2,6 +2,7 @@
 #define SIM_CUH
 
 #include <cuda_runtime.h>
+#include <curand_kernel.h>
 
 constexpr int NUM_GROUPS = 10;
 constexpr int NUM_REGIONS = 3;
@@ -11,7 +12,7 @@ struct XS {
     float sig_c;
     float sig_s;
     float sig_t;
-}
+};
 
 // Energy group lower bounds
 __constant__ float d_GROUP_ENERGY[NUM_GROUPS] = {
@@ -34,7 +35,7 @@ __constant__ float d_sigma_f[NUM_GROUPS][NUM_REGIONS] = {
 };
 
 // capture cross sections in by energy group and region
-__constant__ float d_signma_c[NUM_GROUPS][NUM_REGIONS] = {
+__constant__ float d_sigma_c[NUM_GROUPS][NUM_REGIONS] = {
     {1.41e-6f, 1.71e-2f, 3.34e-6f},
     {1.34e-3f, 7.83e-3f, 3.34e-6f},
     {1.10e-2f, 2.83e-4f, 2.56e-7f},
@@ -68,7 +69,7 @@ XS CrossSections(float Energy, int region)
 
     #pragma unroll
     for (int g = 0; g < NUM_GROUPS; g++) {
-        if (Energy >= d_Group_Energy[g]) {
+        if (Energy >= d_GROUP_ENERGY[g]) {
             group = g;
             break;
         }
@@ -180,11 +181,22 @@ struct HistoryTallies {
     unsigned int clad_surface[NUM_GROUPS];
 };
 
-__device__ float random_uniform(unsigned int *state);
+__global__ void init_rng(curandState *states, unsigned long seed, int n = -1);
 
-__device__ void sample_isotropic_direction(unsigned int *state, float *ux, float *uy);
+__global__ void initialize_neutrons(
+    curandState *states,
+    Neutron *neutrons,
+    float r_fuel,
+    int n
+);
 
-__global__ void init_rng_kernel();
+__device__ float random_uniform(curandState *state);
+
+__device__ void sample_isotropic_direction(curandState *state, float *ux, float *uy);
+
+__device__ float sample_initial_energy(curandState *state);
+
+__device__ int sample_fission_multiplicity(curandState *state);
 
 __global__ void move_kernel(
     const Neutron *move_queue,
@@ -193,7 +205,7 @@ __global__ void move_kernel(
     int *next_move_count,
     Neutron *collision_queue,
     int *collision_count,
-    HistoryTallies *history_tallies
+    curandState *rng_states
 );
 
 __global__ void collision_kernel(
@@ -204,7 +216,8 @@ __global__ void collision_kernel(
     Neutron *fission_bank,
     int fission_bank_capacity,
     int *fission_bank_count,
-    HistoryTallies *history_tallies
+    HistoryTallies *history_tallies,
+    curandState *rng_states
 );
 
 __global__ void compact_queue_kernel(
