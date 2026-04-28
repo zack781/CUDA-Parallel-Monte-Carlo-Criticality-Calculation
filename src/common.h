@@ -22,8 +22,6 @@
 
 #include <cub/cub.cuh>
 
-#include "colors.h"
-
 #define CUDA_CHECK(call) {                                                 \
     cudaError_t err = call;                                                \
     if (err != cudaSuccess) {                                              \

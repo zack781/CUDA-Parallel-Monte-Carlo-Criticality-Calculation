@@ -131,7 +131,7 @@ enum ReactionType {
 struct Neutron {
     float x;
     float y;
-    float energy;
+    float Energy;
     float ux;
     float uy;
     int region;
