@@ -11,7 +11,7 @@ NVCC_FLAGS = $(CUDA_ARCH) $(CFLAGS) -I. -I./include
 
 # Source files
 SOURCES = src/main.cu
-HEADERS = include/sim.cuh src/common.h
+HEADERS = include/sim.cuh src/common.h src/transport.cu src/rng.cu src/fission_bank.cu
 
 # Output executable
 TARGET = transport_sim
