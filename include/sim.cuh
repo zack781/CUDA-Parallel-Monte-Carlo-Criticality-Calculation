@@ -200,19 +200,20 @@ __device__ int sample_fission_multiplicity(curandState *state);
 
 __global__ void move_kernel(
     const Neutron *move_queue,
-    int move_count,
+    int *move_count,
     Neutron *next_move_queue,
     int *next_move_count,
     Neutron *collision_queue,
     int *collision_count,
-    curandState *rng_states
+    curandState *rng_states,
+    float r_fuel
 );
 
 __global__ void collision_kernel(
     const Neutron *collision_queue,
     int collision_count,
-    Neutron *move_queue,
-    int *move_count,
+    Neutron *next_move_queue,
+    int *next_move_count,
     Neutron *fission_bank,
     int fission_bank_capacity,
     int *fission_bank_count,

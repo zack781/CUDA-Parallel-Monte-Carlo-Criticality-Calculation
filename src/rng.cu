@@ -45,7 +45,7 @@ void initialize_neutrons(
 
     // Initial direction: isotropic in 2D
     sample_isotropic_direction(&local_state, &neutrons[tid].ux, &neutrons[tid].uy);
-    neutrons[tid].energy = sample_initial_energy(&local_state);
+    neutrons[tid].Energy = sample_initial_energy(&local_state);
 
     // Initial source is inside fuel
     neutrons[tid].region = FUEL;

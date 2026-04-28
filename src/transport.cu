@@ -126,7 +126,7 @@ __global__ void move_kernel(
 
     // TODO: Process one movement event.
     // - get per-thread RNG state from rng.cu
-    // - look up cross sections for neutron.energy and neutron.region
+    // - look up cross sections for neutron.Energy and neutron.region
     // - compute distance to nearest boundary
     // - compute fuel/clad/square boundary candidates
     // - mask invalid boundaries by region
@@ -148,8 +148,8 @@ __global__ void move_kernel(
 }
 
 __global__ void collision_kernel(const Neutron *collision_queue,
-                                 int collision_count, Neutron *move_queue,
-                                 int *move_count, Neutron *fission_bank,
+                                 int collision_count, Neutron *next_move_queue,
+                                 int *next_move_count, Neutron *fission_bank,
                                  int fission_bank_capacity,
                                  int *fission_bank_count,
                                  HistoryTallies *history_tallies,
@@ -171,8 +171,8 @@ __global__ void collision_kernel(const Neutron *collision_queue,
   }
 
   float reaction_sample = random_uniform(&local_state);
-  float fission_probability = cross_section.fission / cross_section.total;
-  float capture_probability = cross_section.capture / cross_section.total;
+  float fission_probability = cross_section.sig_f / cross_section.sig_t;
+  float capture_probability = cross_section.sig_c / cross_section.sig_t;
 
   // Warp-aggregated append:
   // 1. mark which lanes in this warp are adding particles
@@ -252,7 +252,7 @@ __global__ void collision_kernel(const Neutron *collision_queue,
     float mass_ratio = (mass_number - 1.0f) / (mass_number + 1.0f);
     float ksi = 1.0f + logf(mass_ratio) * (mass_number - 1.0f) *
                            (mass_number - 1.0f) / (2.0f * mass_number);
-    neutron.energy *= expf(-ksi);
+    neutron.Energy *= expf(-ksi);
     sample_isotropic_direction(&local_state, &neutron.ux, &neutron.uy);
 
     unsigned int active_scatter_mask = __activemask();
@@ -264,12 +264,12 @@ __global__ void collision_kernel(const Neutron *collision_queue,
 
     int output_index = 0;
     if (lane == leader) {
-      output_index = atomicAdd(move_count, total_items);
+      output_index = atomicAdd(next_move_count, total_items);
     }
 
     output_index = __shfl_sync(scatter_lane_mask, output_index, leader) + scatter_queue_offset;
 
-    move_queue[output_index] = neutron;
+    next_move_queue[output_index] = neutron;
   }
 
   history_tallies[i] = local_tallies;
