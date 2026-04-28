@@ -1,4 +1,8 @@
 #include "../include/sim.cuh"
+#include <curand_kernel.h>
+#include <math.h>
+
+#define PI 3.14159265358979323846f
 
 namespace {
 
@@ -7,25 +11,25 @@ __device__ int get_energy_group(float energy) {
 
 #pragma unroll
   for (int threshold = 1; threshold < NUM_GROUPS; ++threshold) {
-    group += energy < GROUP_ENERGY[threshold];
+    group += energy < d_GROUP_ENERGY[threshold];
   }
 
   return group;
 }
 
-__device__ CrossSections get_cross_sections(float energy, int region) {
+__device__ XS get_cross_sections(float energy, int region) {
   int group = get_energy_group(energy);
   int material = region;
   if (material < 0 || material >= NUM_REGIONS) {
     material = MODERATOR;
   }
 
-  CrossSections cross_section;
-  cross_section.fission = SIGMA_F[group][material];
-  cross_section.capture = SIGMA_C[group][material];
-  cross_section.scattering = SIGMA_S[group][material];
-  cross_section.total =
-      cross_section.fission + cross_section.capture + cross_section.scattering;
+  XS cross_section;
+  cross_section.sig_f = d_sigma_f[group][material];
+  cross_section.sig_c = d_sigma_c[group][material];
+  cross_section.sig_s = d_sigma_s[group][material];
+  cross_section.sig_t =
+      cross_section.sig_f + cross_section.sig_c + cross_section.sig_s;
   return cross_section;
 }
 
@@ -39,10 +43,11 @@ __global__ void move_kernel(
     Neutron *collision_queue,
     int *collision_count,
     // HistoryTallies *history_tallies,
-    curandState *rng_states
+    curandState *rng_states,
+    float r_fuel
 ) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i >= move_count) return;
+    if (i >= *move_count) return;
 
     Neutron neutron = move_queue[i];
 
@@ -156,16 +161,16 @@ __global__ void collision_kernel(const Neutron *collision_queue,
   HistoryTallies local_tallies = {};
   unsigned int rng_state = 0u;
 
-  CrossSections cross_section =
-      get_cross_sections(neutron.energy, neutron.region);
-  if (cross_section.total <= 0.0f) {
+  XS cross_section =
+      get_cross_sections(neutron.Energy, neutron.region);
+  if (cross_section.sig_t <= 0.0f) {
     history_tallies[i] = local_tallies;
     return;
   }
 
   float reaction_sample = random_uniform(&rng_state);
-  float fission_probability = cross_section.fission / cross_section.total;
-  float capture_probability = cross_section.capture / cross_section.total;
+  float fission_probability = cross_section.sig_f / cross_section.sig_t;
+  float capture_probability = cross_section.sig_c / cross_section.sig_t;
 
   // Warp-aggregated append:
   // 1. mark which lanes in this warp are adding particles
@@ -245,7 +250,7 @@ __global__ void collision_kernel(const Neutron *collision_queue,
     float mass_ratio = (mass_number - 1.0f) / (mass_number + 1.0f);
     float ksi = 1.0f + logf(mass_ratio) * (mass_number - 1.0f) *
                            (mass_number - 1.0f) / (2.0f * mass_number);
-    neutron.energy *= expf(-ksi);
+    neutron.Energy *= expf(-ksi);
     sample_isotropic_direction(&rng_state, &neutron.ux, &neutron.uy);
 
     unsigned int active_scatter_mask = __activemask();

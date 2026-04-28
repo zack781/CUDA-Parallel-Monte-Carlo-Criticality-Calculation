@@ -53,7 +53,7 @@ void initialize_neutrons(
     float b = curand_normal(&local_state);
     float c = curand_normal(&local_state);
 
-    neutrons[tid].energy = sqrtf(a * a + b * b + c * c);
+    neutrons[tid].Energy = sqrtf(a * a + b * b + c * c);
 
     // Initial source is inside fuel
     neutrons[tid].region = 0;

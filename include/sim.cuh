@@ -11,7 +11,7 @@ struct XS {
     float sig_c;
     float sig_s;
     float sig_t;
-}
+};
 
 // Energy group lower bounds
 __constant__ float d_GROUP_ENERGY[NUM_GROUPS] = {
@@ -34,7 +34,7 @@ __constant__ float d_sigma_f[NUM_GROUPS][NUM_REGIONS] = {
 };
 
 // capture cross sections in by energy group and region
-__constant__ float d_signma_c[NUM_GROUPS][NUM_REGIONS] = {
+__constant__ float d_sigma_c[NUM_GROUPS][NUM_REGIONS] = {
     {1.41e-6f, 1.71e-2f, 3.34e-6f},
     {1.34e-3f, 7.83e-3f, 3.34e-6f},
     {1.10e-2f, 2.83e-4f, 2.56e-7f},
@@ -68,7 +68,7 @@ XS CrossSections(float Energy, int region)
 
     #pragma unroll
     for (int g = 0; g < NUM_GROUPS; g++) {
-        if (Energy >= d_Group_Energy[g]) {
+        if (Energy >= d_GROUP_ENERGY[g]) {
             group = g;
             break;
         }
@@ -130,7 +130,7 @@ enum ReactionType {
 struct Neutron {
     float x;
     float y;
-    float energy;
+    float Energy;
     float ux;
     float uy;
     int region;

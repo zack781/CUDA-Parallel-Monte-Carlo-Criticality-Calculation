@@ -1,7 +1,6 @@
 #include "include/sim.cuh"
 #include "common.h"
 #include "transport.cu"
-#include "collision.cu"
 #include "rng.cu"
 
 #define Neutrons_Number 100
@@ -47,7 +46,7 @@ int main() {
     cudaMalloc(&d_collision_count, sizeof(int));
 
     int *d_fission_bank_capacity, *d_fission_bank_count;
-    int fission_bank_capacity = N * 10;  // Fission bank can hold up to 10× particles
+    int fission_bank_capacity = N * 10;
     int fission_bank_count = 0;
     cudaMalloc(&d_fission_bank_capacity, sizeof(int));
     cudaMalloc(&d_fission_bank_count, sizeof(int));
@@ -58,18 +57,16 @@ int main() {
     int collision_count = 0;
 
     initialize_neutrons<<<blocks, threads>>>(d_rng_states, d_source_particles, r_fuel, N);
+    cudaDeviceSynchronize();
     // cudaMemcpy(d_move_queue, neutrons, N * sizeof(Neutron), H2D);
     cudaMemcpy(d_move_queue, d_source_particles, N * sizeof(Neutron), cudaMemcpyDeviceToDevice);
     move_count = N;
-    cudaMemcpy(d_move_count, &move_count, sizeof(int), H2D);
+    cudaMemcpy(d_move_count, &move_count, sizeof(int), cudaMemcpyHostToDevice);
 
-    cudaMemcpy(d_fission_bank_capacity, &fission_bank_capacity, sizeof(int), H2D);
+    cudaMemcpy(d_fission_bank_capacity, &fission_bank_capacity, sizeof(int), cudaMemcpyHostToDevice);
 
-
-    cudaDeviceSynchronize();
-
-
-    while (move_count > 0 || next_move_count > 0) {
+    while (move_count > 0) {
+        printf("move_count = %d\n", move_count);
         if (move_count > 0) {
             int zero = 0;
             cudaMemcpy(d_next_move_count, &zero, sizeof(int), cudaMemcpyHostToDevice);
@@ -78,7 +75,7 @@ int main() {
                 d_move_queue, d_move_count,
                 d_next_move_queue, d_next_move_count,
                 d_collision_queue, d_collision_count,
-                d_rng_states
+                d_rng_states, r_fuel
             );
             cudaDeviceSynchronize();
 
@@ -87,7 +84,7 @@ int main() {
         }
 
         if (collision_count > 0) {
-            collision_kernel<<<blocks, threads>>>collision_kernel<<<blocks, threads>>>(
+            collision_kernel<<<blocks, threads>>>(
                 d_collision_queue, collision_count,
                 d_move_queue, d_move_count,
                 d_fission_bank, fission_bank_capacity,
@@ -95,24 +92,30 @@ int main() {
                 d_history_tallies
             );
             cudaDeviceSynchronize();
-            cudaMemcpy(&move_count, d_move_count, sizeof(int), D2H);
+            cudaMemcpy(&move_count, d_move_count, sizeof(int), cudaMemcpyDeviceToHost);
         }
 
         // Sorting and consolidation here
-        // RESET AND SWAP - at the END of iteration
+        // // Phase 3: CONSOLIDATE (MISSING!)
+
+        // Merge scattered + boundary + fission into move_queue for next iteration
+        // if (fission_bank_count > 0 || move_count > 0) {
+            // Copy scattered particles from move_queue
+            // Copy boundary particles from next_move_queue
+            // Copy fission from fission_bank
+            // Into a single consolidated move_queue
+            // Update move_count = scattered + boundary + fission
+        // }
         int zero = 0;
 
-        // Swap pointers for next iteration
         Neutron *temp = d_move_queue;
         d_move_queue = d_next_move_queue;
         d_next_move_queue = temp;
 
-        // Update counters for next iteration
         move_count = next_move_count;
         next_move_count = 0;
         collision_count = 0;
 
-        // Reset device counters
         cudaMemcpy(d_next_move_count, &zero, sizeof(int), cudaMemcpyHostToDevice);
         cudaMemcpy(d_collision_count, &zero, sizeof(int), cudaMemcpyHostToDevice);
     }
@@ -120,4 +123,7 @@ int main() {
     cudaFree(d_fission_bank_capacity);
     cudaFree(d_fission_bank_count);
     cudaFree(d_source_particles);
+
+    printf("simulation ended!\n");
+    return 0;
 }
