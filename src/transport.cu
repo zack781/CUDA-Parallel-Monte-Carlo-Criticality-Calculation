@@ -39,13 +39,86 @@ __global__ void move_kernel(
     int *next_move_count,
     Neutron *collision_queue,
     int *collision_count,
-    HistoryTallies *history_tallies
+    // HistoryTallies *history_tallies,
+    curandState *rng_states
 ) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= move_count) return;
 
     Neutron neutron = move_queue[i];
-    HistoryTallies local_tallies = {};
+
+    float E = neutron.Energy;
+    int region = neutron.region;
+
+    XS xs = CrossSections(E, region);
+
+    float sig_f = xs.sig_f;
+    float sig_c = xs.sig_c;
+    float sig_s = xs.sig_s;
+    float sig_t = xs.sig_t; // this is the total cross section
+
+    curandState local_state = rng_states[i];
+    float xi = curand_uniform(&local_state);
+
+    // sample free-flight distance (python version): d = -(1.0 / sig[3]) * np.log(np.random.random())
+    // equivalent to: d = -(1.0 / sig_t) * log(a random float number between 0.0 and 1.0)
+    float d = -logf(xi) / sig_t;
+
+    // distance to geometric boundary
+    // define theta
+    float theta = 2 * PI * curand_uniform(&local_state);
+    float ux = cosf(theta);
+    float uy = sinf(theta);
+
+    float a = 1.0;
+    float b = 2.0f * (neutron.x * ux + neutron.y * uy);
+    float x = neutron.x * neutron.x + neutron.y * neutron.y - r_fuel * r_fuel;
+    float delta = b * b - 4.0f * a * c;
+
+    float dmin = INFINITY;
+
+    if (delta >= 0.0f) {
+        float sqrt_delta = sqrtf(delta);
+
+        float df1 = (-b - sqrt_delta) / (2.0f * a);
+        float df2 = (-b + sqrt_delta) / (2.0f * a);
+
+        const float eps = 1e-9f;
+
+        if (df1 > eps && df2 > eps) {
+            dmin = fminf(df1, df2);
+        } else if (df1 > eps) {
+            dmin = df1;
+        } else if (df2 > eps) {
+            dmin = df2;
+        } else {
+            rng_states[i] = local_state;
+            return;  // no forward boundary intersection
+        }
+    } else {
+        rng_states[i] = local_state;
+        return;      // no boundary intersection
+    }
+
+    // HistoryTallies local_tallies = {};
+
+    if (d >= dmin) {
+        // Move particle to geometric boundary
+        neutron.x += dmin * ux;
+        neutron.y += dmin * uy;
+        neutron.region = 1;
+
+        int idx = atomicAdd(next_move_count, 1);
+        next_move_queue[idx] = neutron;
+    } else {
+        // Move particle to collision site
+        neutron.x += d * ux;
+        neutron.y += d * uy;
+
+        int idx = atomicAdd(collision_count, 1);
+        collision_queue[idx] = neutron;
+    }
+
 
     // TODO: Process one movement event.
     // - get per-thread RNG state from rng.cu
@@ -65,7 +138,9 @@ __global__ void move_kernel(
     // - push neutron to collision_queue
     // - collision_kernel will sample scatter/capture/fission
 
-    history_tallies[i] = local_tallies;
+    // history_tallies[i] = local_tallies;
+
+    rng_states[i] = local_state; // prevents next curand call from generating the same random number
 }
 
 __global__ void collision_kernel(
