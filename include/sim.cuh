@@ -2,19 +2,26 @@
 #define SIM_CUH
 
 #include <cuda_runtime.h>
+#include <curand_kernel.h>
 
 constexpr int NUM_GROUPS = 10;
 constexpr int NUM_REGIONS = 3;
-constexpr int NUM_SURFACES = 8;
+
+struct XS {
+    float sig_f;
+    float sig_c;
+    float sig_s;
+    float sig_t;
+};
 
 // Energy group lower bounds
-constexpr float GROUP_ENERGY[NUM_GROUPS] = {
+__constant__ float d_GROUP_ENERGY[NUM_GROUPS] = {
     3.0e+1f, 3.0e+0f, 3.0e-1f, 3.0e-2f, 3.0e-3f,
     3.0e-4f, 3.0e-5f, 3.0e-6f, 3.0e-7f, 3.0e-8f
 };
 
 // fission cross sections in by energy group and region
-constexpr float SIGMA_F[NUM_GROUPS][NUM_REGIONS] = {
+__constant__ float d_sigma_f[NUM_GROUPS][NUM_REGIONS] = {
     {1.05e-1f, 0.0f, 0.0f},
     {5.96e-2f, 0.0f, 0.0f},
     {6.02e-2f, 0.0f, 0.0f},
@@ -28,7 +35,7 @@ constexpr float SIGMA_F[NUM_GROUPS][NUM_REGIONS] = {
 };
 
 // capture cross sections in by energy group and region
-constexpr float SIGMA_C[NUM_GROUPS][NUM_REGIONS] = {
+__constant__ float d_sigma_c[NUM_GROUPS][NUM_REGIONS] = {
     {1.41e-6f, 1.71e-2f, 3.34e-6f},
     {1.34e-3f, 7.83e-3f, 3.34e-6f},
     {1.10e-2f, 2.83e-4f, 2.56e-7f},
@@ -42,7 +49,7 @@ constexpr float SIGMA_C[NUM_GROUPS][NUM_REGIONS] = {
 };
 
 // scattering cross sections in by energy group and region
-constexpr float SIGMA_S[NUM_GROUPS][NUM_REGIONS] = {
+__constant__ float d_sigma_s[NUM_GROUPS][NUM_REGIONS] = {
     {2.76e-1f, 1.44e-1f, 1.27e-2f},
     {3.88e-1f, 1.76e-1f, 7.36e-2f},
     {4.77e-1f, 3.44e-1f, 2.65e-1f},
@@ -55,6 +62,27 @@ constexpr float SIGMA_S[NUM_GROUPS][NUM_REGIONS] = {
     {4.36e+1f, 2.41e-1f, 6.91e-1f}
 };
 
+__device__ __forceinline__
+XS CrossSections(float Energy, int region)
+{
+    int group = 9;
+
+    #pragma unroll
+    for (int g = 0; g < NUM_GROUPS; g++) {
+        if (Energy >= d_GROUP_ENERGY[g]) {
+            group = g;
+            break;
+        }
+    }
+
+    XS xs;
+    xs.sig_f = d_sigma_f[group][region];
+    xs.sig_c = d_sigma_c[group][region];
+    xs.sig_s = d_sigma_s[group][region];
+    xs.sig_t = xs.sig_f + xs.sig_c + xs.sig_s;
+
+    return xs;
+}
 
 struct Geometry {
     float r_fuel;     // Fuel pellet radius.
@@ -153,11 +181,22 @@ struct HistoryTallies {
     unsigned int clad_surface[NUM_GROUPS];
 };
 
-__device__ float random_uniform(unsigned int *state);
+__global__ void init_rng(curandState *states, unsigned long seed, int n = -1);
 
-__device__ void sample_isotropic_direction(unsigned int *state, float *ux, float *uy);
+__global__ void initialize_neutrons(
+    curandState *states,
+    Neutron *neutrons,
+    float r_fuel,
+    int n
+);
 
-__global__ void init_rng_kernel();
+__device__ float random_uniform(curandState *state);
+
+__device__ void sample_isotropic_direction(curandState *state, float *ux, float *uy);
+
+__device__ float sample_initial_energy(curandState *state);
+
+__device__ int sample_fission_multiplicity(curandState *state);
 
 __global__ void move_kernel(
     const Neutron *move_queue,
@@ -166,7 +205,7 @@ __global__ void move_kernel(
     int *next_move_count,
     Neutron *collision_queue,
     int *collision_count,
-    HistoryTallies *history_tallies
+    curandState *rng_states
 );
 
 __global__ void collision_kernel(
@@ -177,7 +216,8 @@ __global__ void collision_kernel(
     Neutron *fission_bank,
     int fission_bank_capacity,
     int *fission_bank_count,
-    HistoryTallies *history_tallies
+    HistoryTallies *history_tallies,
+    curandState *rng_states
 );
 
 __global__ void compact_queue_kernel(
