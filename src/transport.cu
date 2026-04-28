@@ -2,35 +2,34 @@
 
 namespace {
 
-__device__ int get_energy_group(float energy)
-{
-    int group = 0;
+__device__ int get_energy_group(float energy) {
+  int group = 0;
 
-    #pragma unroll
-    for (int threshold = 1; threshold < NUM_GROUPS; ++threshold) {
-        group += energy < GROUP_ENERGY[threshold];
-    }
+#pragma unroll
+  for (int threshold = 1; threshold < NUM_GROUPS; ++threshold) {
+    group += energy < GROUP_ENERGY[threshold];
+  }
 
-    return group;
+  return group;
 }
 
-__device__ CrossSections get_cross_sections(float energy, int region)
-{
-    int group = get_energy_group(energy);
-    int material = region;
-    if (material < 0 || material >= NUM_REGIONS) {
-        material = MODERATOR;
-    }
+__device__ CrossSections get_cross_sections(float energy, int region) {
+  int group = get_energy_group(energy);
+  int material = region;
+  if (material < 0 || material >= NUM_REGIONS) {
+    material = MODERATOR;
+  }
 
-    CrossSections cross_section;
-    cross_section.fission = SIGMA_F[group][material];
-    cross_section.capture = SIGMA_C[group][material];
-    cross_section.scattering = SIGMA_S[group][material];
-    cross_section.total = cross_section.fission + cross_section.capture + cross_section.scattering;
-    return cross_section;
+  CrossSections cross_section;
+  cross_section.fission = SIGMA_F[group][material];
+  cross_section.capture = SIGMA_C[group][material];
+  cross_section.scattering = SIGMA_S[group][material];
+  cross_section.total =
+      cross_section.fission + cross_section.capture + cross_section.scattering;
+  return cross_section;
 }
 
-}
+} // namespace
 
 __global__ void move_kernel(
     const Neutron *move_queue,
@@ -143,62 +142,143 @@ __global__ void move_kernel(
     rng_states[i] = local_state; // prevents next curand call from generating the same random number
 }
 
-__global__ void collision_kernel(
-    const Neutron *collision_queue,
-    int collision_count,
-    Neutron *move_queue,
-    int *move_count,
-    Neutron *fission_bank,
-    int fission_bank_capacity,
-    int *fission_bank_count,
-    HistoryTallies *history_tallies
-) {
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i >= collision_count) return;
+__global__ void collision_kernel(const Neutron *collision_queue,
+                                 int collision_count, Neutron *move_queue,
+                                 int *move_count, Neutron *fission_bank,
+                                 int fission_bank_capacity,
+                                 int *fission_bank_count,
+                                 HistoryTallies *history_tallies) {
+  int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i >= collision_count)
+    return;
 
-    Neutron neutron = collision_queue[i];
-    HistoryTallies local_tallies = {};
+  Neutron neutron = collision_queue[i];
+  HistoryTallies local_tallies = {};
+  unsigned int rng_state = 0u;
 
-    // TODO: Process one collision event.
-    // - get per-thread RNG state from rng.cu
-    // - look up cross sections for neutron.energy and neutron.region
-    // - sample reaction from fission/capture/scattering probabilities
-    // - if scatter:
-    // - update neutron energy
-    // - sample new direction
-    // - update local_tallies.scattering
-    // - push neutron back to move_queue
-    // - if capture:
-    // - update local_tallies.capture
-    // - kill particle by not pushing it to any queue
-    // - if fission:
-    // - update local_tallies.fission and local_tallies.neutrons_produced
-    // - write children to fission_bank
-    // - kill parent by not pushing it to any queue
-
+  CrossSections cross_section =
+      get_cross_sections(neutron.energy, neutron.region);
+  if (cross_section.total <= 0.0f) {
     history_tallies[i] = local_tallies;
+    return;
+  }
+
+  float reaction_sample = random_uniform(&rng_state);
+  float fission_probability = cross_section.fission / cross_section.total;
+  float capture_probability = cross_section.capture / cross_section.total;
+
+  // Warp-aggregated append:
+  // 1. mark which lanes in this warp are adding particles
+  // 2. count how many total output slots the warp needs
+  // 3. one lane reserves all slots
+  // 4. each lane writes at reserved_base + its local offset
+
+  // Fission: lanes where fission_neutrons > 0 add children.
+  if (reaction_sample <= fission_probability) {
+    local_tallies.fission = 1;
+
+    int fission_neutrons = random_uniform(&rng_state) < 0.5f ? 2 : 3;
+    local_tallies.neutrons_produced = fission_neutrons;
+
+    unsigned int active_fission_mask = __activemask();
+    // mask of lanes where fission_neutrons > 0 (fission lanes)
+    unsigned int fission_lane_mask =
+        __ballot_sync(active_fission_mask, fission_neutrons > 0);
+    int lane = threadIdx.x & 31;
+    int lane_offset = 0;
+    int total_items = 0;
+
+#pragma unroll
+    for (int source_lane = 0; source_lane < 32; ++source_lane) {
+      unsigned int source_bit = 1u << source_lane;
+      if ((fission_lane_mask & source_bit) != 0) {
+        // share total number of fission neutrons within warps
+        int source_items =
+            __shfl_sync(fission_lane_mask, fission_neutrons, source_lane);
+        total_items += source_items;
+        if (source_lane < lane) {
+          lane_offset += source_items;
+        }
+      }
+    }
+
+    // get the first lane that has to write
+    int leader = __ffs(fission_lane_mask) - 1;
+    int bank_index = 0;
+    if (lane == leader) {
+      // leader reserves spot in queue
+      bank_index = atomicAdd(fission_bank_count, total_items);
+    }
+
+    // share queue spot with rest of warp
+    bank_index =
+        __shfl_sync(fission_lane_mask, bank_index, leader) + lane_offset;
+
+    for (int child = 0; child < fission_neutrons; ++child) {
+      int output_index = bank_index + child;
+      if (output_index < fission_bank_capacity) {
+        Neutron fission_neutron = neutron;
+        sample_isotropic_direction(&rng_state, &fission_neutron.ux,
+                                   &fission_neutron.uy);
+        fission_bank[output_index] = fission_neutron;
+      }
+    }
+  }
+
+  // Capture: no particles added.
+  else if (reaction_sample <= fission_probability + capture_probability) {
+    local_tallies.capture = 1;
+  }
+
+  // Scatter: every active lane adds one neutron.
+  else {
+    local_tallies.scattering = 1;
+
+    float mass_number = 1.00794f;
+    if (neutron.region == FUEL) {
+      mass_number = 238.02891f;
+    } else if (neutron.region == CLAD) {
+      mass_number = 26.981539f;
+    }
+
+    // compute collisions (same as QMC)
+    float mass_ratio = (mass_number - 1.0f) / (mass_number + 1.0f);
+    float ksi = 1.0f + logf(mass_ratio) * (mass_number - 1.0f) *
+                           (mass_number - 1.0f) / (2.0f * mass_number);
+    neutron.energy *= expf(-ksi);
+    sample_isotropic_direction(&rng_state, &neutron.ux, &neutron.uy);
+
+    unsigned int active_scatter_mask = __activemask();
+    unsigned int scatter_lane_mask = __ballot_sync(active_scatter_mask, true);
+    int lane = threadIdx.x % 32;
+    int scatter_queue_offset = __popc(scatter_lane_mask & ((1u << lane) - 1));
+    int total_items = __popc(scatter_lane_mask);
+    int leader = __ffs(scatter_lane_mask) - 1;
+
+    int output_index = 0;
+    if (lane == leader) {
+      output_index = atomicAdd(move_count, total_items);
+    }
+
+    output_index = __shfl_sync(scatter_lane_mask, output_index, leader) + scatter_queue_offset;
+
+    move_queue[output_index] = neutron;
+  }
+
+  history_tallies[i] = local_tallies;
 }
 
-__global__ void compact_queue_kernel(
-    const Neutron *input_queue,
-    const int *keep_flags,
-    const int *output_offsets,
-    int input_count,
-    Neutron *output_queue
-) {
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i >= input_count) return;
+__global__ void compact_queue_kernel(const Neutron *input_queue,
+                                     const int *keep_flags,
+                                     const int *output_offsets, int input_count,
+                                     Neutron *output_queue) {
+  int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i >= input_count) {
+    return;
+  }
 
-    // TODO: Rebuild a dense queue after event processing.
-    // - remove particles that were killed, leaked, or moved to another queue
-    // - keep only particles that should continue in this queue
-    // - pack surviving particles contiguously into output_queue
-    //
-    // - keep_flags[i] is 1 if input_queue[i] should survive, 0 otherwise
-    // - output_offsets comes from an exclusive prefix sum of keep_flags
-    // - if keep_flags[i] is 1, write input_queue[i] to output_queue[output_offsets[i]]
-    // - output queue length is output_offsets[input_count - 1] + keep_flags[input_count - 1]
-    if (keep_flags[i]) {
-        output_queue[output_offsets[i]] = input_queue[i];
-    }
+  if (keep_flags[i] != 0) {
+    int output_index = output_offsets[i];
+    output_queue[output_index] = input_queue[i];
+  }
 }
