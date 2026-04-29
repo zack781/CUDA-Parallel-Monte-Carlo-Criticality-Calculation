@@ -4,6 +4,10 @@
 #include <cuda_runtime.h>
 #include <curand_kernel.h>
 
+#ifndef DEBUG_TRANSPORT
+#define DEBUG_TRANSPORT 0
+#endif
+
 constexpr int NUM_GROUPS = 10;
 constexpr int NUM_REGIONS = 3;
 
@@ -167,6 +171,17 @@ struct Tallies {
     unsigned long long neutrons_produced;
     unsigned long long queue_overflow;
     unsigned long long fission_bank_overflow;
+    unsigned long long lost_no_surface;
+#if DEBUG_TRANSPORT
+    unsigned long long lost_no_surface_fuel;
+    unsigned long long lost_no_surface_clad;
+    unsigned long long lost_no_surface_moderator;
+    unsigned long long lost_no_surface_invalid_region;
+    unsigned long long lost_no_surface_valid_region;
+    unsigned long long fuel_surface_crossings;
+    unsigned long long clad_surface_crossings;
+    unsigned long long square_surface_crossings;
+#endif
 };
 
 struct SurfaceTallies {

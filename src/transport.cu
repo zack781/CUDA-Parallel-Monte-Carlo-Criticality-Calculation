@@ -10,7 +10,7 @@ __device__ int get_energy_group(float energy) {
   int group = 0;
 
 #pragma unroll
-  for (int threshold = 1; threshold < NUM_GROUPS; ++threshold) {
+  for (int threshold = 0; threshold < NUM_GROUPS - 1; ++threshold) {
     group += energy < d_GROUP_ENERGY[threshold];
   }
 
@@ -146,6 +146,34 @@ __global__ void move_kernel(
     }
 
     if (surface == SURFACE_NONE) {
+        atomicAdd(&global_tallies->lost_no_surface, 1ULL);
+#if DEBUG_TRANSPORT
+        float radius = sqrtf(neutron.x * neutron.x + neutron.y * neutron.y);
+        float r_clad_out = DEFAULT_GEOMETRY.r_clad_out;
+        const float region_eps = 1.0e-5f;
+        bool valid_region = true;
+
+        if (region == FUEL) {
+            atomicAdd(&global_tallies->lost_no_surface_fuel, 1ULL);
+            valid_region = radius <= r_fuel + region_eps;
+        } else if (region == CLAD) {
+            atomicAdd(&global_tallies->lost_no_surface_clad, 1ULL);
+            valid_region = radius >= r_fuel - region_eps &&
+                           radius <= r_clad_out + region_eps;
+        } else {
+            atomicAdd(&global_tallies->lost_no_surface_moderator, 1ULL);
+            float half_pitch = 0.5f * DEFAULT_GEOMETRY.pitch;
+            bool inside_cell = fabsf(neutron.x) <= half_pitch + region_eps &&
+                               fabsf(neutron.y) <= half_pitch + region_eps;
+            valid_region = radius >= r_clad_out - region_eps && inside_cell;
+        }
+
+        if (valid_region) {
+            atomicAdd(&global_tallies->lost_no_surface_valid_region, 1ULL);
+        } else {
+            atomicAdd(&global_tallies->lost_no_surface_invalid_region, 1ULL);
+        }
+#endif
         return;
     }
 
@@ -155,14 +183,34 @@ __global__ void move_kernel(
         // Move particle to geometric boundary
         neutron.x += dmin * neutron.ux;
         neutron.y += dmin * neutron.uy;
+        const float boundary_eps = 1.0e-5f;
 
         if (surface == SURFACE_FUEL) {
+#if DEBUG_TRANSPORT
+            if (region == FUEL) {
+                atomicAdd(&global_tallies->fuel_surface_crossings, 1ULL);
+            } else if (region == CLAD) {
+                atomicAdd(&global_tallies->clad_surface_crossings, 1ULL);
+            }
+#endif
             neutron.region = region == FUEL ? CLAD : FUEL;
             neutron.regionchange = 1;
+            neutron.x += boundary_eps * neutron.ux;
+            neutron.y += boundary_eps * neutron.uy;
         } else if (surface == SURFACE_CLAD_OUTER) {
+#if DEBUG_TRANSPORT
+            if (region == CLAD) {
+                atomicAdd(&global_tallies->clad_surface_crossings, 1ULL);
+            }
+#endif
             neutron.region = region == CLAD ? MODERATOR : CLAD;
             neutron.regionchange = 1;
+            neutron.x += boundary_eps * neutron.ux;
+            neutron.y += boundary_eps * neutron.uy;
         } else {
+#if DEBUG_TRANSPORT
+            atomicAdd(&global_tallies->square_surface_crossings, 1ULL);
+#endif
             if (surface == SURFACE_X_MAX || surface == SURFACE_X_MIN) {
                 neutron.x = -neutron.x;
             } else {

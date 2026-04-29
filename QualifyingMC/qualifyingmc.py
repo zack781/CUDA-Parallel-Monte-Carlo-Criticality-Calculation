@@ -141,6 +141,7 @@ def QualifyingMC(Neutrons_Number):
     Absorption = 0
     Scattering = 0
     Leakage    = 0
+    LostNoSurface = 0
 
     #=========================================================#
     #                        Geometry                         #
@@ -223,12 +224,16 @@ def QualifyingMC(Neutrons_Number):
                     df2 = (-b + delta**0.5) / (2 * a)
                     df.append(df2)
                 else:
+                    LostNoSurface += 1
                     break
 
                 for k in range(len(df)):
                     if df[k] > 1e-9:
                         d_pos.append(df[k])
                 d_pos.sort()
+                if len(d_pos) == 0:
+                    LostNoSurface += 1
+                    break
                 dmin = d_pos[0]
 
                 if d >= dmin:
@@ -285,6 +290,7 @@ def QualifyingMC(Neutrons_Number):
                         dc4 = (-b + delta_out**0.5) / (2 * a)
                         dc.append(dc4)
                     else:
+                        LostNoSurface += 1
                         break
                 else:
                     dc1 = 1e100
@@ -295,12 +301,16 @@ def QualifyingMC(Neutrons_Number):
                         dc4 = (-b + delta_out**0.5) / (2 * a)
                         dc.append(dc4)
                     else:
+                        LostNoSurface += 1
                         break
 
                 for k in range(len(dc)):
                     if dc[k] > 1e-9:
                         d_pos.append(dc[k])
                 d_pos.sort()
+                if len(d_pos) == 0:
+                    LostNoSurface += 1
+                    break
                 dmin = d_pos[0]
 
                 if d >= dmin:
@@ -490,9 +500,13 @@ def QualifyingMC(Neutrons_Number):
     print("Average nu...............................= ", nu)
     print("Number of Neutrons Produced by Fission...= ", Neutrons_Produced)
     print("Number of Neutrons Leaked from System....= ", Leakage)
+    print("Lost With No Surface.....................= ", LostNoSurface)
+    print("Fuel Surface Crossings...................= ", sum(FuelSurfNeuNum))
+    print("Clad Surface Crossings...................= ", sum(CladSurfNeuNum))
+    print("Square Surface Crossings.................= ", Leakage)
     print("Effective Multiplication Factor(keff)....= ", keff)
 
-    plt.show()
+    # plt.show()
     return keff
 
 

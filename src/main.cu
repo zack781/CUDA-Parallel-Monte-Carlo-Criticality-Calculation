@@ -1,9 +1,11 @@
+#define DEBUG_TRANSPORT 0
+
 #include "include/sim.cuh"
 #include "common.h"
 #include "transport.cu"
 #include "rng.cu"
 
-#define Neutrons_Number 100
+#define Neutrons_Number 1000
 #define FUEL_RADIUS 0.53
 
 // move_queue: contains neutrons that need to be moved to their next event
@@ -70,8 +72,20 @@ int main() {
 
     CUDA_CHECK(cudaMemcpy(d_fission_bank_count, &fission_bank_count, sizeof(int), cudaMemcpyHostToDevice));
 
+    int iter = 0;
+    const int max_iterations = 100000;
     while (move_count > 0) {
-        printf("move_count = %d\n", move_count);
+#if DEBUG_TRANSPORT
+        if (iter % 100 == 0) {
+            printf("iter = %d, move_count = %d\n", iter, move_count);
+        }
+#endif
+        if (iter >= max_iterations) {
+            printf("stopping: max iterations reached with move_count = %d\n", move_count);
+            break;
+        }
+        iter++;
+
         if (move_count > 0) {
             int move_blocks = (move_count + threads - 1) / threads;
             int zero = 0;
@@ -164,6 +178,17 @@ int main() {
     printf("Number of Neutrons Leaked from System....=  %llu\n", global_tallies.leakage);
     printf("Queue Overflowed Particles...............=  %llu\n", global_tallies.queue_overflow);
     printf("Fission Bank Overflowed Particles........=  %llu\n", global_tallies.fission_bank_overflow);
+    printf("Lost With No Surface.....................=  %llu\n", global_tallies.lost_no_surface);
+#if DEBUG_TRANSPORT
+    printf("  Lost No Surface Fuel...................=  %llu\n", global_tallies.lost_no_surface_fuel);
+    printf("  Lost No Surface Clad...................=  %llu\n", global_tallies.lost_no_surface_clad);
+    printf("  Lost No Surface Moderator..............=  %llu\n", global_tallies.lost_no_surface_moderator);
+    printf("  Lost No Surface Valid Region...........=  %llu\n", global_tallies.lost_no_surface_valid_region);
+    printf("  Lost No Surface Invalid Region.........=  %llu\n", global_tallies.lost_no_surface_invalid_region);
+    printf("Fuel Surface Crossings...................=  %llu\n", global_tallies.fuel_surface_crossings);
+    printf("Clad Surface Crossings...................=  %llu\n", global_tallies.clad_surface_crossings);
+    printf("Square Surface Crossings.................=  %llu\n", global_tallies.square_surface_crossings);
+#endif
     printf("Effective Multiplication Factor(keff)....=  %.12f\n", keff);
 
     CUDA_CHECK(cudaFree(d_fission_bank_count));
