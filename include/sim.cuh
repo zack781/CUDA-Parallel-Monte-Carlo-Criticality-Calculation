@@ -254,7 +254,13 @@ __global__ void normalize_bank_kernel();
 
 __global__ void entropy_tally_kernel();
 
-__global__ void resample_kernel();
+__global__ void resample_kernel(
+    const Neutron *fission_bank,
+    int fission_bank_count,
+    Neutron *source_particles,
+    int source_count,
+    curandState *rng_states
+);
 
 __global__ void initialize_source_kernel();
 

@@ -4,8 +4,10 @@
 #include "common.h"
 #include "transport.cu"
 #include "rng.cu"
+#include "fission_bank.cu"
 
 #define Neutrons_Number 1000
+#define NUM_GENERATIONS 10
 #define FUEL_RADIUS 0.53
 
 // move_queue: contains neutrons that need to be moved to their next event
@@ -72,77 +74,96 @@ int main() {
 
     CUDA_CHECK(cudaMemcpy(d_fission_bank_count, &fission_bank_count, sizeof(int), cudaMemcpyHostToDevice));
 
-    int iter = 0;
+    int completed_generations = 0;
     const int max_iterations = 100000;
-    while (move_count > 0) {
-#if DEBUG_TRANSPORT
-        if (iter % 100 == 0) {
-            printf("iter = %d, move_count = %d\n", iter, move_count);
-        }
-#endif
-        if (iter >= max_iterations) {
-            printf("stopping: max iterations reached with move_count = %d\n", move_count);
-            break;
-        }
-        iter++;
+    for (int generation = 0; generation < NUM_GENERATIONS; ++generation) {
+        int zero = 0;
+        CUDA_CHECK(cudaMemcpy(d_fission_bank_count, &zero, sizeof(int), cudaMemcpyHostToDevice));
 
-        if (move_count > 0) {
-            int move_blocks = (move_count + threads - 1) / threads;
-            int zero = 0;
+        int iter = 0;
+        while (move_count > 0) {
+#if DEBUG_TRANSPORT
+            if (iter % 100 == 0) {
+                printf("generation = %d, iter = %d, move_count = %d\n", generation, iter, move_count);
+            }
+#endif
+            if (iter >= max_iterations) {
+                printf("stopping: max iterations reached with move_count = %d\n", move_count);
+                break;
+            }
+            iter++;
+
+            if (move_count > 0) {
+                int move_blocks = (move_count + threads - 1) / threads;
+                CUDA_CHECK(cudaMemcpy(d_next_move_count, &zero, sizeof(int), cudaMemcpyHostToDevice));
+                CUDA_CHECK(cudaMemcpy(d_collision_count, &zero, sizeof(int), cudaMemcpyHostToDevice));
+                move_kernel<<<move_blocks, threads>>>(
+                    d_move_queue, d_move_count,
+                    d_next_move_queue, d_next_move_count,
+                    d_collision_queue, d_collision_count,
+                    d_global_tallies,
+                    queue_capacity,
+                    r_fuel
+                );
+                CUDA_CHECK(cudaGetLastError());
+                CUDA_CHECK(cudaDeviceSynchronize());
+
+                CUDA_CHECK(cudaMemcpy(&next_move_count, d_next_move_count, sizeof(int), cudaMemcpyDeviceToHost));
+                CUDA_CHECK(cudaMemcpy(&collision_count, d_collision_count, sizeof(int), cudaMemcpyDeviceToHost));
+            }
+
+            if (collision_count > 0) {
+                int collision_blocks = (collision_count + threads - 1) / threads;
+                collision_kernel<<<collision_blocks, threads>>>(
+                    d_collision_queue, collision_count,
+                    d_next_move_queue, d_next_move_count,
+                    d_fission_bank, fission_bank_capacity,
+                    d_fission_bank_count,
+                    d_history_tallies,
+                    d_global_tallies,
+                    queue_capacity
+                );
+                CUDA_CHECK(cudaGetLastError());
+                CUDA_CHECK(cudaDeviceSynchronize());
+                CUDA_CHECK(cudaMemcpy(&next_move_count, d_next_move_count, sizeof(int), cudaMemcpyDeviceToHost));
+            }
+
+            Neutron *temp = d_move_queue;
+            d_move_queue = d_next_move_queue;
+            d_next_move_queue = temp;
+
+            move_count = next_move_count;
+            next_move_count = 0;
+            collision_count = 0;
+
+            CUDA_CHECK(cudaMemcpy(d_move_count, &move_count, sizeof(int), cudaMemcpyHostToDevice));
             CUDA_CHECK(cudaMemcpy(d_next_move_count, &zero, sizeof(int), cudaMemcpyHostToDevice));
             CUDA_CHECK(cudaMemcpy(d_collision_count, &zero, sizeof(int), cudaMemcpyHostToDevice));
-            move_kernel<<<move_blocks, threads>>>(
-                d_move_queue, d_move_count,
-                d_next_move_queue, d_next_move_count,
-                d_collision_queue, d_collision_count,
-                d_global_tallies,
-                queue_capacity,
-                r_fuel
-            );
-            CUDA_CHECK(cudaGetLastError());
-            CUDA_CHECK(cudaDeviceSynchronize());
-
-            CUDA_CHECK(cudaMemcpy(&next_move_count, d_next_move_count, sizeof(int), cudaMemcpyDeviceToHost));
-            CUDA_CHECK(cudaMemcpy(&collision_count, d_collision_count, sizeof(int), cudaMemcpyDeviceToHost));
         }
 
-        if (collision_count > 0) {
-            int collision_blocks = (collision_count + threads - 1) / threads;
-            collision_kernel<<<collision_blocks, threads>>>(
-                d_collision_queue, collision_count,
-                d_next_move_queue, d_next_move_count,
-                d_fission_bank, fission_bank_capacity,
-                d_fission_bank_count,
-                d_history_tallies,
-                d_global_tallies,
-                queue_capacity
-            );
-            CUDA_CHECK(cudaGetLastError());
-            CUDA_CHECK(cudaDeviceSynchronize());
-            CUDA_CHECK(cudaMemcpy(&next_move_count, d_next_move_count, sizeof(int), cudaMemcpyDeviceToHost));
+        CUDA_CHECK(cudaMemcpy(&fission_bank_count, d_fission_bank_count, sizeof(int), cudaMemcpyDeviceToHost));
+        double generation_keff = static_cast<double>(fission_bank_count) / static_cast<double>(N);
+        printf("Generation %d Fission Bank Sites.........=  %d\n", generation, fission_bank_count);
+        printf("Generation %d keff estimate..............=  %.12f\n", generation, generation_keff);
+        completed_generations = generation + 1;
+
+        if (generation + 1 >= NUM_GENERATIONS || fission_bank_count <= 0) {
+            break;
         }
 
-        // Sorting and consolidation here
-        // // Phase 3: CONSOLIDATE (MISSING!)
+        resample_kernel<<<blocks, threads>>>(
+            d_fission_bank,
+            fission_bank_count,
+            d_move_queue,
+            N,
+            d_rng_states
+        );
+        CUDA_CHECK(cudaGetLastError());
+        CUDA_CHECK(cudaDeviceSynchronize());
 
-        // Merge scattered + boundary + fission into move_queue for next iteration
-        // if (fission_bank_count > 0 || move_count > 0) {
-            // Copy scattered particles from move_queue
-            // Copy boundary particles from next_move_queue
-            // Copy fission from fission_bank
-            // Into a single consolidated move_queue
-            // Update move_count = scattered + boundary + fission
-        // }
-        int zero = 0;
-
-        Neutron *temp = d_move_queue;
-        d_move_queue = d_next_move_queue;
-        d_next_move_queue = temp;
-
-        move_count = next_move_count;
+        move_count = N;
         next_move_count = 0;
         collision_count = 0;
-
         CUDA_CHECK(cudaMemcpy(d_move_count, &move_count, sizeof(int), cudaMemcpyHostToDevice));
         CUDA_CHECK(cudaMemcpy(d_next_move_count, &zero, sizeof(int), cudaMemcpyHostToDevice));
         CUDA_CHECK(cudaMemcpy(d_collision_count, &zero, sizeof(int), cudaMemcpyHostToDevice));
@@ -167,6 +188,7 @@ int main() {
         : 0.0;
 
     printf("Number of Neutrons.......................=  %d\n", N);
+    printf("Completed Generations....................=  %d\n", completed_generations);
     printf("Number of Interactions...................=  %llu\n", interactions);
     printf("Number of Scattering Events..............=  %llu\n", global_tallies.scattering);
     printf("Number of Capture Events.................=  %llu\n", global_tallies.capture);
