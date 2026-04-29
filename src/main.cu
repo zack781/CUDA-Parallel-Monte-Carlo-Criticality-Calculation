@@ -5,20 +5,33 @@
 #include "transport.cu"
 #include "rng.cu"
 #include "fission_bank.cu"
+#include <cstdlib>
 
-#define Neutrons_Number 1000
-#define NUM_GENERATIONS 10
-#define EVENT_STEPS_PER_HOST_CHECK 10
+#define DEFAULT_NEUTRONS 10000
+#define DEFAULT_GENERATIONS 10
+#define DEFAULT_BATCH_SIZE 10
+#define QUEUE_MULTIPLIER 10
 #define FUEL_RADIUS 0.53
 
 // move_queue: contains neutrons that need to be moved to their next event
 // next_move_queue: contains neutrons that hit a geometric boundary and need transport in the next iteration
 // collision_queue: contains neutrons that reached their collision site
 
-int main() {
-    int N = Neutrons_Number;
+int main(int argc, char **argv) {
+    int N = argc > 1 ? std::atoi(argv[1]) : DEFAULT_NEUTRONS;
+    int num_generations = argc > 2 ? std::atoi(argv[2]) : DEFAULT_GENERATIONS;
+    int batch_size = argc > 3 ? std::atoi(argv[3]) : DEFAULT_BATCH_SIZE;
+
+    if (N <= 0 || num_generations <= 0 || batch_size <= 0) {
+        printf("Usage: %s [neutrons] [generations] [batch_size]\n", argv[0]);
+        return 1;
+    }
+
     float r_fuel = FUEL_RADIUS;
-    int queue_capacity = N * 10;
+    int queue_capacity = N * QUEUE_MULTIPLIER;
+
+    printf("Config: neutrons=%d generations=%d batch_size=%d queue_capacity=%d\n",
+           N, num_generations, batch_size, queue_capacity);
 
     curandState *d_rng_states;
     Neutron *d_source_particles;
@@ -75,7 +88,7 @@ int main() {
 
     int completed_generations = 0;
     const int max_iterations = 100000;
-    for (int generation = 0; generation < NUM_GENERATIONS; ++generation) {
+    for (int generation = 0; generation < num_generations; ++generation) {
         int zero = 0;
         CUDA_CHECK(cudaMemcpy(d_fission_bank_count, &zero, sizeof(int), cudaMemcpyHostToDevice));
 
@@ -91,7 +104,7 @@ int main() {
                 break;
             }
 
-            for (int step = 0; step < EVENT_STEPS_PER_HOST_CHECK && iter < max_iterations; ++step, ++iter) {
+            for (int step = 0; step < batch_size && iter < max_iterations; ++step, ++iter) {
                 CUDA_CHECK(cudaMemcpy(d_next_move_count, &zero, sizeof(int), cudaMemcpyHostToDevice));
                 CUDA_CHECK(cudaMemcpy(d_collision_count, &zero, sizeof(int), cudaMemcpyHostToDevice));
                 move_kernel<<<capacity_blocks, threads>>>(
@@ -134,7 +147,7 @@ int main() {
         printf("Generation %d keff estimate..............=  %.12f\n", generation, generation_keff);
         completed_generations = generation + 1;
 
-        if (generation + 1 >= NUM_GENERATIONS || fission_bank_count <= 0) {
+        if (generation + 1 >= num_generations || fission_bank_count <= 0) {
             break;
         }
 

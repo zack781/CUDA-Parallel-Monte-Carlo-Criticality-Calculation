@@ -25,7 +25,7 @@ $(TARGET): $(SOURCES) $(HEADERS)
 
 # Run on GPU
 run: $(TARGET)
-	srun -n 1 --gpus=1 ./$(TARGET)
+	srun -n 1 --gpus=1 ./$(TARGET) $(ARGS)
 
 # Clean
 clean:
