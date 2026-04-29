@@ -176,15 +176,9 @@ int main() {
     unsigned long long interactions =
         global_tallies.scattering + global_tallies.capture + global_tallies.fission;
     unsigned long long absorption = global_tallies.capture + global_tallies.fission;
-    unsigned long long neutrons_lost =
-        global_tallies.leakage + absorption + global_tallies.fission;
     double average_nu = global_tallies.fission > 0
         ? static_cast<double>(global_tallies.neutrons_produced) /
               static_cast<double>(global_tallies.fission)
-        : 0.0;
-    double keff = neutrons_lost > 0
-        ? static_cast<double>(global_tallies.neutrons_produced + global_tallies.leakage) /
-              static_cast<double>(neutrons_lost)
         : 0.0;
 
     printf("Number of Neutrons.......................=  %d\n", N);
@@ -211,7 +205,6 @@ int main() {
     printf("Clad Surface Crossings...................=  %llu\n", global_tallies.clad_surface_crossings);
     printf("Square Surface Crossings.................=  %llu\n", global_tallies.square_surface_crossings);
 #endif
-    printf("Effective Multiplication Factor(keff)....=  %.12f\n", keff);
 
     CUDA_CHECK(cudaFree(d_fission_bank_count));
     CUDA_CHECK(cudaFree(d_global_tallies));
