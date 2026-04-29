@@ -165,6 +165,8 @@ struct Tallies {
     unsigned long long scattering;
     unsigned long long leakage;
     unsigned long long neutrons_produced;
+    unsigned long long queue_overflow;
+    unsigned long long fission_bank_overflow;
 };
 
 struct SurfaceTallies {
@@ -208,6 +210,7 @@ __global__ void move_kernel(
     Neutron *collision_queue,
     int *collision_count,
     Tallies *global_tallies,
+    int queue_capacity,
     float r_fuel
 );
 
@@ -220,7 +223,8 @@ __global__ void collision_kernel(
     int fission_bank_capacity,
     int *fission_bank_count,
     HistoryTallies *history_tallies,
-    Tallies *global_tallies
+    Tallies *global_tallies,
+    int queue_capacity
 );
 
 __global__ void compact_queue_kernel(

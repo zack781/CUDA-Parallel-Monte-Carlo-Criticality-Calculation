@@ -59,6 +59,26 @@ __device__ void check_circle_boundary(const Neutron &neutron, float radius,
   }
 }
 
+__device__ int reserve_queue_slots(int *count, int requested, int capacity,
+                                   int *reserved) {
+  int old_count = *count;
+  while (true) {
+    if (old_count >= capacity) {
+      *reserved = 0;
+      return capacity;
+    }
+
+    int available = capacity - old_count;
+    int granted = requested < available ? requested : available;
+    int observed = atomicCAS(count, old_count, old_count + granted);
+    if (observed == old_count) {
+      *reserved = granted;
+      return old_count;
+    }
+    old_count = observed;
+  }
+}
+
 } // namespace
 
 __global__ void move_kernel(
@@ -70,6 +90,7 @@ __global__ void move_kernel(
     int *collision_count,
     Tallies *global_tallies,
     // HistoryTallies *history_tallies,
+    int queue_capacity,
     float r_fuel
 ) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -152,17 +173,27 @@ __global__ void move_kernel(
             atomicAdd(&global_tallies->leakage, 1ULL);
         }
 
-        int idx = atomicAdd(next_move_count, 1);
-        neutron.rng_state = local_state;
-        next_move_queue[idx] = neutron;
+        int reserved = 0;
+        int idx = reserve_queue_slots(next_move_count, 1, queue_capacity, &reserved);
+        if (reserved == 1) {
+            neutron.rng_state = local_state;
+            next_move_queue[idx] = neutron;
+        } else {
+            atomicAdd(&global_tallies->queue_overflow, 1ULL);
+        }
     } else {
         // Move particle to collision site
         neutron.x += d * neutron.ux;
         neutron.y += d * neutron.uy;
 
-        int idx = atomicAdd(collision_count, 1);
-        neutron.rng_state = local_state;
-        collision_queue[idx] = neutron;
+        int reserved = 0;
+        int idx = reserve_queue_slots(collision_count, 1, queue_capacity, &reserved);
+        if (reserved == 1) {
+            neutron.rng_state = local_state;
+            collision_queue[idx] = neutron;
+        } else {
+            atomicAdd(&global_tallies->queue_overflow, 1ULL);
+        }
     }
 
 
@@ -193,7 +224,8 @@ __global__ void collision_kernel(const Neutron *collision_queue,
                                  int fission_bank_capacity,
                                  int *fission_bank_count,
                                  HistoryTallies *history_tallies,
-                                 Tallies *global_tallies) {
+                                 Tallies *global_tallies,
+                                 int queue_capacity) {
   int i = blockIdx.x * blockDim.x + threadIdx.x;
   if (i >= collision_count)
     return;
@@ -251,22 +283,28 @@ __global__ void collision_kernel(const Neutron *collision_queue,
     // get the first lane that has to write
     int leader = __ffs(fission_lane_mask) - 1;
     int bank_index = 0;
+    int reserved_items = 0;
     if (lane == leader) {
       // leader reserves spot in queue
-      bank_index = atomicAdd(fission_bank_count, total_items);
+      bank_index = reserve_queue_slots(fission_bank_count, total_items,
+                                       fission_bank_capacity, &reserved_items);
+      if (reserved_items < total_items) {
+        atomicAdd(&global_tallies->fission_bank_overflow,
+                  static_cast<unsigned long long>(total_items - reserved_items));
+      }
     }
 
     // share queue spot with rest of warp
-    bank_index =
-        __shfl_sync(fission_lane_mask, bank_index, leader) + lane_offset;
+    bank_index = __shfl_sync(fission_lane_mask, bank_index, leader) + lane_offset;
+    reserved_items = __shfl_sync(fission_lane_mask, reserved_items, leader);
 
     for (int child = 0; child < fission_neutrons; ++child) {
       int output_index = bank_index + child;
-      if (output_index < fission_bank_capacity) {
+      if (lane_offset + child < reserved_items) {
         Neutron fission_neutron = neutron;
         sample_isotropic_direction(&local_state, &fission_neutron.ux,
                                    &fission_neutron.uy);
-        fission_neutron.regionchange = 0;
+        fission_neutron.regionchange = 1;
         fission_neutron.rng_state = local_state;
         fission_bank[output_index] = fission_neutron;
       }
@@ -304,14 +342,23 @@ __global__ void collision_kernel(const Neutron *collision_queue,
     int leader = __ffs(scatter_lane_mask) - 1;
 
     int output_index = 0;
+    int reserved_items = 0;
     if (lane == leader) {
-      output_index = atomicAdd(next_move_count, total_items);
+      output_index = reserve_queue_slots(next_move_count, total_items,
+                                         queue_capacity, &reserved_items);
     }
 
     output_index = __shfl_sync(scatter_lane_mask, output_index, leader) + scatter_queue_offset;
+    reserved_items = __shfl_sync(scatter_lane_mask, reserved_items, leader);
 
     neutron.rng_state = local_state;
-    next_move_queue[output_index] = neutron;
+    if (lane == leader && reserved_items < total_items) {
+      atomicAdd(&global_tallies->queue_overflow,
+                static_cast<unsigned long long>(total_items - reserved_items));
+    }
+    if (scatter_queue_offset < reserved_items) {
+      next_move_queue[output_index] = neutron;
+    }
   }
 
   if (local_tallies.fission != 0) {
