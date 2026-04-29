@@ -135,6 +135,8 @@ struct Neutron {
     float ux;
     float uy;
     int region;
+    int regionchange;
+    curandState rng_state;
 };
 
 // reaction cross sections for one energy group and region
@@ -205,7 +207,7 @@ __global__ void move_kernel(
     int *next_move_count,
     Neutron *collision_queue,
     int *collision_count,
-    curandState *rng_states,
+    Tallies *global_tallies,
     float r_fuel
 );
 
@@ -218,8 +220,7 @@ __global__ void collision_kernel(
     int fission_bank_capacity,
     int *fission_bank_count,
     HistoryTallies *history_tallies,
-    Tallies *global_tallies,
-    curandState *rng_states
+    Tallies *global_tallies
 );
 
 __global__ void compact_queue_kernel(

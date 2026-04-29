@@ -43,12 +43,15 @@ void initialize_neutrons(
     neutrons[tid].x = r * cosf(theta_pos);
     neutrons[tid].y = r * sinf(theta_pos);
 
-    // Initial direction: isotropic in 2D
-    sample_isotropic_direction(&local_state, &neutrons[tid].ux, &neutrons[tid].uy);
+    // Direction is sampled in move_kernel when regionchange == 0.
+    neutrons[tid].ux = 1.0f;
+    neutrons[tid].uy = 0.0f;
     neutrons[tid].Energy = sample_initial_energy(&local_state);
 
     // Initial source is inside fuel
     neutrons[tid].region = FUEL;
+    neutrons[tid].regionchange = 0;
+    neutrons[tid].rng_state = local_state;
 
     states[tid] = local_state;
 }

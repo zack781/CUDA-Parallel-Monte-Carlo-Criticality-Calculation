@@ -78,7 +78,8 @@ int main() {
                 d_move_queue, d_move_count,
                 d_next_move_queue, d_next_move_count,
                 d_collision_queue, d_collision_count,
-                d_rng_states, r_fuel
+                d_global_tallies,
+                r_fuel
             );
             cudaDeviceSynchronize();
 
@@ -94,8 +95,7 @@ int main() {
                 d_fission_bank, fission_bank_capacity,
                 d_fission_bank_count,
                 d_history_tallies,
-                d_global_tallies,
-                d_rng_states
+                d_global_tallies
             );
             cudaDeviceSynchronize();
             cudaMemcpy(&next_move_count, d_next_move_count, sizeof(int), cudaMemcpyDeviceToHost);
@@ -133,9 +133,15 @@ int main() {
     unsigned long long interactions =
         global_tallies.scattering + global_tallies.capture + global_tallies.fission;
     unsigned long long absorption = global_tallies.capture + global_tallies.fission;
+    unsigned long long neutrons_lost =
+        global_tallies.leakage + absorption + global_tallies.fission;
     double average_nu = global_tallies.fission > 0
         ? static_cast<double>(global_tallies.neutrons_produced) /
               static_cast<double>(global_tallies.fission)
+        : 0.0;
+    double keff = neutrons_lost > 0
+        ? static_cast<double>(global_tallies.neutrons_produced + global_tallies.leakage) /
+              static_cast<double>(neutrons_lost)
         : 0.0;
 
     printf("Number of Neutrons.......................=  %d\n", N);
@@ -146,8 +152,8 @@ int main() {
     printf("Number of Absorption Events..............=  %llu\n", absorption);
     printf("Average nu...............................=  %.6f\n", average_nu);
     printf("Number of Neutrons Produced by Fission...=  %llu\n", global_tallies.neutrons_produced);
-    printf("Number of Neutrons Leaked from System....=  not tallied\n");
-    printf("Effective Multiplication Factor(keff)....=  not tallied\n");
+    printf("Number of Neutrons Leaked from System....=  %llu\n", global_tallies.leakage);
+    printf("Effective Multiplication Factor(keff)....=  %.12f\n", keff);
 
     cudaFree(d_fission_bank_count);
     cudaFree(d_global_tallies);
