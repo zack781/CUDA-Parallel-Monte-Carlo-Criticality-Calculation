@@ -8,6 +8,7 @@
 
 #define Neutrons_Number 1000
 #define NUM_GENERATIONS 10
+#define EVENT_STEPS_PER_HOST_CHECK 10
 #define FUEL_RADIUS 0.53
 
 // move_queue: contains neutrons that need to be moved to their next event
@@ -61,8 +62,6 @@ int main() {
 
 
     int move_count = 0;
-    int next_move_count = 0;
-    int collision_count = 0;
 
     initialize_neutrons<<<blocks, threads>>>(d_rng_states, d_source_particles, r_fuel, N);
     CUDA_CHECK(cudaGetLastError());
@@ -91,13 +90,11 @@ int main() {
                 printf("stopping: max iterations reached with move_count = %d\n", move_count);
                 break;
             }
-            iter++;
 
-            if (move_count > 0) {
-                int move_blocks = (move_count + threads - 1) / threads;
+            for (int step = 0; step < EVENT_STEPS_PER_HOST_CHECK && iter < max_iterations; ++step, ++iter) {
                 CUDA_CHECK(cudaMemcpy(d_next_move_count, &zero, sizeof(int), cudaMemcpyHostToDevice));
                 CUDA_CHECK(cudaMemcpy(d_collision_count, &zero, sizeof(int), cudaMemcpyHostToDevice));
-                move_kernel<<<move_blocks, threads>>>(
+                move_kernel<<<capacity_blocks, threads>>>(
                     d_move_queue, d_move_count,
                     d_next_move_queue, d_next_move_count,
                     d_collision_queue, d_collision_count,
@@ -106,16 +103,9 @@ int main() {
                     r_fuel
                 );
                 CUDA_CHECK(cudaGetLastError());
-                CUDA_CHECK(cudaDeviceSynchronize());
 
-                CUDA_CHECK(cudaMemcpy(&next_move_count, d_next_move_count, sizeof(int), cudaMemcpyDeviceToHost));
-                CUDA_CHECK(cudaMemcpy(&collision_count, d_collision_count, sizeof(int), cudaMemcpyDeviceToHost));
-            }
-
-            if (collision_count > 0) {
-                int collision_blocks = (collision_count + threads - 1) / threads;
-                collision_kernel<<<collision_blocks, threads>>>(
-                    d_collision_queue, collision_count,
+                collision_kernel<<<capacity_blocks, threads>>>(
+                    d_collision_queue, d_collision_count,
                     d_next_move_queue, d_next_move_count,
                     d_fission_bank, fission_bank_capacity,
                     d_fission_bank_count,
@@ -124,20 +114,17 @@ int main() {
                     queue_capacity
                 );
                 CUDA_CHECK(cudaGetLastError());
-                CUDA_CHECK(cudaDeviceSynchronize());
-                CUDA_CHECK(cudaMemcpy(&next_move_count, d_next_move_count, sizeof(int), cudaMemcpyDeviceToHost));
+
+                Neutron *temp_queue = d_move_queue;
+                d_move_queue = d_next_move_queue;
+                d_next_move_queue = temp_queue;
+
+                int *temp_count = d_move_count;
+                d_move_count = d_next_move_count;
+                d_next_move_count = temp_count;
             }
 
-            Neutron *temp = d_move_queue;
-            d_move_queue = d_next_move_queue;
-            d_next_move_queue = temp;
-
-            move_count = next_move_count;
-            next_move_count = 0;
-            collision_count = 0;
-
-            CUDA_CHECK(cudaMemcpy(d_move_count, &move_count, sizeof(int), cudaMemcpyHostToDevice));
-            CUDA_CHECK(cudaMemcpy(d_next_move_count, &zero, sizeof(int), cudaMemcpyHostToDevice));
+            CUDA_CHECK(cudaMemcpy(&move_count, d_move_count, sizeof(int), cudaMemcpyDeviceToHost));
             CUDA_CHECK(cudaMemcpy(d_collision_count, &zero, sizeof(int), cudaMemcpyHostToDevice));
         }
 
@@ -162,8 +149,6 @@ int main() {
         CUDA_CHECK(cudaDeviceSynchronize());
 
         move_count = N;
-        next_move_count = 0;
-        collision_count = 0;
         CUDA_CHECK(cudaMemcpy(d_move_count, &move_count, sizeof(int), cudaMemcpyHostToDevice));
         CUDA_CHECK(cudaMemcpy(d_next_move_count, &zero, sizeof(int), cudaMemcpyHostToDevice));
         CUDA_CHECK(cudaMemcpy(d_collision_count, &zero, sizeof(int), cudaMemcpyHostToDevice));

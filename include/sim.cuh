@@ -231,7 +231,7 @@ __global__ void move_kernel(
 
 __global__ void collision_kernel(
     const Neutron *collision_queue,
-    int collision_count,
+    const int *collision_count,
     Neutron *next_move_queue,
     int *next_move_count,
     Neutron *fission_bank,

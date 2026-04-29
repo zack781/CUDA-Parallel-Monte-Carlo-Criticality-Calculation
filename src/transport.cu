@@ -267,7 +267,7 @@ __global__ void move_kernel(
 }
 
 __global__ void collision_kernel(const Neutron *collision_queue,
-                                 int collision_count, Neutron *next_move_queue,
+                                 const int *collision_count, Neutron *next_move_queue,
                                  int *next_move_count, Neutron *fission_bank,
                                  int fission_bank_capacity,
                                  int *fission_bank_count,
@@ -275,7 +275,7 @@ __global__ void collision_kernel(const Neutron *collision_queue,
                                  Tallies *global_tallies,
                                  int queue_capacity) {
   int i = blockIdx.x * blockDim.x + threadIdx.x;
-  if (i >= collision_count)
+  if (i >= *collision_count)
     return;
 
   Neutron neutron = collision_queue[i];
