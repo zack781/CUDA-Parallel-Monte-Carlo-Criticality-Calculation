@@ -94,6 +94,7 @@ int main(int argc, char **argv) {
 
         int iter = 0;
         while (move_count > 0) {
+            int active_blocks = (move_count + threads - 1) / threads;
 #if DEBUG_TRANSPORT
             if (iter % 100 == 0) {
                 printf("generation = %d, iter = %d, move_count = %d\n", generation, iter, move_count);
@@ -107,7 +108,7 @@ int main(int argc, char **argv) {
             for (int step = 0; step < batch_size && iter < max_iterations; ++step, ++iter) {
                 CUDA_CHECK(cudaMemcpy(d_next_move_count, &zero, sizeof(int), cudaMemcpyHostToDevice));
                 CUDA_CHECK(cudaMemcpy(d_collision_count, &zero, sizeof(int), cudaMemcpyHostToDevice));
-                move_kernel<<<capacity_blocks, threads>>>(
+                move_kernel<<<active_blocks, threads>>>(
                     d_move_queue, d_move_count,
                     d_next_move_queue, d_next_move_count,
                     d_collision_queue, d_collision_count,
@@ -117,7 +118,7 @@ int main(int argc, char **argv) {
                 );
                 CUDA_CHECK(cudaGetLastError());
 
-                collision_kernel<<<capacity_blocks, threads>>>(
+                collision_kernel<<<active_blocks, threads>>>(
                     d_collision_queue, d_collision_count,
                     d_next_move_queue, d_next_move_count,
                     d_fission_bank, fission_bank_capacity,
