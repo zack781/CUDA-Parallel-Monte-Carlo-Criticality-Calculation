@@ -20,7 +20,7 @@ struct XS {
 
 // Energy group lower bounds (MeV)
 __constant__ float d_GROUP_ENERGY[NUM_GROUPS] = {
-2.0e+1f, 3.0e+0f, 3.0e-1f, 3.0e-2f, 3.0e-3f,
+    3.0e+1f, 3.0e+0f, 3.0e-1f, 3.0e-2f, 3.0e-3f,
     3.0e-4f, 3.0e-5f, 3.0e-6f, 3.0e-7f, 3.0e-8f
 };
 

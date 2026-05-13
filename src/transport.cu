@@ -371,7 +371,7 @@ __global__ void collision_kernel(const Neutron *collision_queue,
     local_tallies.scattering = 1;
 
     // float mass_number = 1.00794f;
-    float mass_number = 6.0f;
+    float mass_number = 4.5f;
     if (neutron.region == FUEL) {
       mass_number = 238.02891f;
     } else if (neutron.region == CLAD) {

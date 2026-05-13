@@ -490,7 +490,7 @@ def QualifyingMC(Neutrons_Number):
     Absorption   = Fission + Capture
     Interactions = Scattering + Absorption
     Neutrons_Lost = Leakage + Absorption + Fission
-    keff = (Neutrons_Produced + Leakage) / Neutrons_Lost
+    keff = (Neutrons_Produced + Leakage) / Neutrons_Lost # This formula is misleading
 
     print("Number of Interactions...................= ", Interactions)
     print("Number of Scattering Events..............= ", Scattering)
