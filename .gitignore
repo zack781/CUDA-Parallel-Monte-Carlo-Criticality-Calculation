@@ -1,1 +1,6 @@
 .venv/
+endfb*
+particle*
+statepoint*
+summary*
+geometry*

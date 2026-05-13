@@ -1,0 +1,185 @@
+ ===========================>     TALLY 41     <============================
+
+ Material 1
+   Incoming Energy [0.003, 0.03)
+     Total Material
+       Flux                                 0.24504 +/- 0.00130001
+       Fission Rate                         0.127799 +/- 0.00070096
+       Absorption Rate                      0.168893 +/- 0.000927167
+       Scattering Rate                      0.100977 +/- 0.000535712
+   Incoming Energy [0.03, 0.3)
+     Total Material
+       Flux                                 0.97901 +/- 0.00355538
+       Fission Rate                         0.221656 +/- 0.000828272
+       Absorption Rate                      0.294979 +/- 0.00109941
+       Scattering Rate                      0.39543 +/- 0.00143622
+   Incoming Energy [0.3, 3)
+     Total Material
+       Flux                                 0.400795 +/- 0.00155639
+       Fission Rate                         0.0176506 +/- 9.33461e-05
+       Absorption Rate                      0.026233 +/- 0.000128369
+       Scattering Rate                      0.158992 +/- 0.000618515
+   Incoming Energy [3, 30)
+     Total Material
+       Flux                                 0.352768 +/- 0.00121275
+       Fission Rate                         0.00953059 +/- 7.1678e-05
+       Absorption Rate                      0.0526727 +/- 0.000389945
+       Scattering Rate                      0.142662 +/- 0.000488326
+   Incoming Energy [30, 300)
+     Total Material
+       Flux                                 0.388952 +/- 0.00154765
+       Fission Rate                         0.00813889 +/- 4.31557e-05
+       Absorption Rate                      0.0364 +/- 0.00032954
+       Scattering Rate                      0.205063 +/- 0.000981138
+   Incoming Energy [300, 3000)
+     Total Material
+       Flux                                 0.421507 +/- 0.00195346
+       Fission Rate                         0.00279191 +/- 1.57799e-05
+       Absorption Rate                      0.0147844 +/- 0.00011694
+       Scattering Rate                      0.210142 +/- 0.000947821
+   Incoming Energy [3000, 30000)
+     Total Material
+       Flux                                 0.467455 +/- 0.00162889
+       Fission Rate                         0.00103896 +/- 3.52588e-06
+       Absorption Rate                      0.00818444 +/- 3.91834e-05
+       Scattering Rate                      0.234274 +/- 0.000843671
+   Incoming Energy [30000, 300000)
+     Total Material
+       Flux                                 0.804697 +/- 0.00273209
+       Fission Rate                         0.000879519 +/- 2.93952e-06
+       Absorption Rate                      0.00470114 +/- 1.59976e-05
+       Scattering Rate                      0.348627 +/- 0.00116427
+   Incoming Energy [300000, 3000000)
+     Total Material
+       Flux                                 2.17331 +/- 0.00541527
+       Fission Rate                         0.0116513 +/- 4.71273e-05
+       Absorption Rate                      0.0161067 +/- 5.18108e-05
+       Scattering Rate                      0.694857 +/- 0.00173716
+   Incoming Energy [3000000, 20000000)
+     Total Material
+       Flux                                 0.456049 +/- 0.00283263
+       Fission Rate                         0.00650587 +/- 4.02463e-05
+       Absorption Rate                      0.00740787 +/- 4.61328e-05
+       Scattering Rate                      0.11599 +/- 0.000729103
+ Material 2
+   Incoming Energy [0.003, 0.03)
+     Total Material
+       Flux                                 0.593238 +/- 0.00290114
+       Fission Rate                         0 +/- 0
+       Absorption Rate                      0.0104999 +/- 5.31916e-05
+       Scattering Rate                      0.0525709 +/- 0.00025737
+   Incoming Energy [0.03, 0.3)
+     Total Material
+       Flux                                 2.07048 +/- 0.00597511
+       Fission Rate                         0 +/- 0
+       Absorption Rate                      0.0174178 +/- 5.21653e-05
+       Scattering Rate                      0.179083 +/- 0.000516927
+   Incoming Energy [0.3, 3)
+     Total Material
+       Flux                                 0.776238 +/- 0.00305849
+       Fission Rate                         0 +/- 0
+       Absorption Rate                      0.00190679 +/- 7.56399e-06
+       Scattering Rate                      0.0666999 +/- 0.000262796
+   Incoming Energy [3, 30)
+     Total Material
+       Flux                                 0.715399 +/- 0.00221265
+       Fission Rate                         0 +/- 0
+       Absorption Rate                      0.00054549 +/- 1.81243e-06
+       Scattering Rate                      0.0614053 +/- 0.000189929
+   Incoming Energy [30, 300)
+     Total Material
+       Flux                                 0.770304 +/- 0.00207841
+       Fission Rate                         0 +/- 0
+       Absorption Rate                      0.00018206 +/- 5.01705e-07
+       Scattering Rate                      0.0657835 +/- 0.000177346
+   Incoming Energy [300, 3000)
+     Total Material
+       Flux                                 0.816925 +/- 0.00268992
+       Fission Rate                         0 +/- 0
+       Absorption Rate                      5.50384e-05 +/- 1.86582e-07
+       Scattering Rate                      0.0669506 +/- 0.000219553
+   Incoming Energy [3000, 30000)
+     Total Material
+       Flux                                 0.88657 +/- 0.00219789
+       Fission Rate                         0 +/- 0
+       Absorption Rate                      0.000209061 +/- 4.79362e-06
+       Scattering Rate                      0.057527 +/- 0.000185809
+   Incoming Energy [30000, 300000)
+     Total Material
+       Flux                                 1.44634 +/- 0.00351263
+       Fission Rate                         0 +/- 0
+       Absorption Rate                      0.000163265 +/- 8.565e-07
+       Scattering Rate                      0.459837 +/- 0.0013876
+   Incoming Energy [300000, 3000000)
+     Total Material
+       Flux                                 3.54786 +/- 0.00802626
+       Fission Rate                         0 +/- 0
+       Absorption Rate                      0.000109471 +/- 3.35188e-07
+       Scattering Rate                      0.732749 +/- 0.00162284
+   Incoming Energy [3000000, 20000000)
+     Total Material
+       Flux                                 0.726589 +/- 0.0046414
+       Fission Rate                         0 +/- 0
+       Absorption Rate                      0.000979917 +/- 9.60799e-06
+       Scattering Rate                      0.0996482 +/- 0.00064412
+ Material 3
+   Incoming Energy [0.003, 0.03)
+     Total Material
+       Flux                                 1.38057 +/- 0.00536043
+       Fission Rate                         0 +/- 0
+       Absorption Rate                      0.11949 +/- 0.00046935
+       Scattering Rate                      5.73885 +/- 0.0223902
+   Incoming Energy [0.03, 0.3)
+     Total Material
+       Flux                                 4.3198 +/- 0.00996397
+       Fission Rate                         0 +/- 0
+       Absorption Rate                      0.176817 +/- 0.000440987
+       Scattering Rate                      11.1301 +/- 0.0267701
+   Incoming Energy [0.3, 3)
+     Total Material
+       Flux                                 1.52118 +/- 0.00427407
+       Fission Rate                         0 +/- 0
+       Absorption Rate                      0.0181036 +/- 5.43178e-05
+       Scattering Rate                      2.44541 +/- 0.00690269
+   Incoming Energy [3, 30)
+     Total Material
+       Flux                                 1.42292 +/- 0.00286197
+       Fission Rate                         0 +/- 0
+       Absorption Rate                      0.00523721 +/- 1.09777e-05
+       Scattering Rate                      2.13091 +/- 0.00428645
+   Incoming Energy [30, 300)
+     Total Material
+       Flux                                 1.51343 +/- 0.00269249
+       Fission Rate                         0 +/- 0
+       Absorption Rate                      0.00175977 +/- 3.45933e-06
+       Scattering Rate                      2.25956 +/- 0.00402025
+   Incoming Energy [300, 3000)
+     Total Material
+       Flux                                 1.57992 +/- 0.00329495
+       Fission Rate                         0 +/- 0
+       Absorption Rate                      0.000577276 +/- 1.25348e-06
+       Scattering Rate                      2.34354 +/- 0.00488867
+   Incoming Energy [3000, 30000)
+     Total Material
+       Flux                                 1.71733 +/- 0.00384082
+       Fission Rate                         0 +/- 0
+       Absorption Rate                      0.00019109 +/- 4.20237e-07
+       Scattering Rate                      2.39807 +/- 0.00534006
+   Incoming Energy [30000, 300000)
+     Total Material
+       Flux                                 2.71634 +/- 0.00481434
+       Fission Rate                         0 +/- 0
+       Absorption Rate                      8.74202e-05 +/- 1.36253e-07
+       Scattering Rate                      2.53836 +/- 0.00413065
+   Incoming Energy [300000, 3000000)
+     Total Material
+       Flux                                 6.28548 +/- 0.0161266
+       Fission Rate                         0 +/- 0
+       Absorption Rate                      8.56958e-05 +/- 2.13513e-07
+       Scattering Rate                      2.51123 +/- 0.00586246
+   Incoming Energy [3000000, 20000000)
+     Total Material
+       Flux                                 1.30444 +/- 0.00928965
+       Fission Rate                         0 +/- 0
+       Absorption Rate                      0.00171743 +/- 1.57932e-05
+       Scattering Rate                      0.240722 +/- 0.00176135

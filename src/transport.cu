@@ -212,13 +212,15 @@ __global__ void move_kernel(
             atomicAdd(&global_tallies->square_surface_crossings, 1ULL);
 #endif
             if (surface == SURFACE_X_MAX || surface == SURFACE_X_MIN) {
-                neutron.x = -neutron.x;
+                // neutron.x = -neutron.x;
+                neutron.ux = -neutron.ux;
             } else {
-                neutron.y = -neutron.y;
+                // neutron.y = -neutron.y;
+                neutron.uy = -neutron.uy;
             }
             neutron.region = MODERATOR;
             neutron.regionchange = 1;
-            atomicAdd(&global_tallies->leakage, 1ULL);
+            // atomicAdd(&global_tallies->leakage, 1ULL);
         }
 
         int reserved = 0;
@@ -376,10 +378,16 @@ __global__ void collision_kernel(const Neutron *collision_queue,
     }
 
     // compute collisions (same as QMC)
-    float mass_ratio = (mass_number - 1.0f) / (mass_number + 1.0f);
-    float ksi = 1.0f + logf(mass_ratio) * (mass_number - 1.0f) *
-                           (mass_number - 1.0f) / (2.0f * mass_number);
-    neutron.Energy *= expf(-ksi);
+    // float mass_ratio = (mass_number - 1.0f) / (mass_number + 1.0f);
+    // float ksi = 1.0f + logf(mass_ratio) * (mass_number - 1.0f) *
+    //                        (mass_number - 1.0f) / (2.0f * mass_number);
+    // neutron.Energy *= expf(-ksi);
+
+    float alpha = powf((mass_number - 1.0f) / (mass_number + 1.0f), 2.0f);
+    float rand_val = random_uniform(&local_state);
+
+    // The neutron randomly loses energy anywhere between its current Energy and alpha * Energy
+    neutron.Energy *= (alpha + (1.0f - alpha) * rand_val);
     neutron.regionchange = 0;
 
     unsigned int active_scatter_mask = __activemask();

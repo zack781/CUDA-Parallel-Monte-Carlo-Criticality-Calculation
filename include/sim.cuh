@@ -18,53 +18,102 @@ struct XS {
     float sig_t;
 };
 
-// Energy group lower bounds
+// Energy group lower bounds (MeV)
 __constant__ float d_GROUP_ENERGY[NUM_GROUPS] = {
     3.0e+1f, 3.0e+0f, 3.0e-1f, 3.0e-2f, 3.0e-3f,
     3.0e-4f, 3.0e-5f, 3.0e-6f, 3.0e-7f, 3.0e-8f
 };
 
-// fission cross sections in by energy group and region
+// sigma f by energy group and region
 __constant__ float d_sigma_f[NUM_GROUPS][NUM_REGIONS] = {
-    {1.05e-1f, 0.0f, 0.0f},
-    {5.96e-2f, 0.0f, 0.0f},
-    {6.02e-2f, 0.0f, 0.0f},
-    {1.06e-1f, 0.0f, 0.0f},
-    {2.46e-1f, 0.0f, 0.0f},
-    {2.50e-1f, 0.0f, 0.0f},
-    {1.07e-1f, 0.0f, 0.0f},
-    {1.28e+0f, 0.0f, 0.0f},
-    {9.30e+0f, 0.0f, 0.0f},
-    {2.58e+1f, 0.0f, 0.0f}
+    {5.215e-01f, 0.000e+00f, 0.000e+00f},
+    {2.264e-01f, 0.000e+00f, 0.000e+00f},
+    {4.404e-02f, 0.000e+00f, 0.000e+00f},
+    {2.702e-02f, 0.000e+00f, 0.000e+00f},
+    {2.093e-02f, 0.000e+00f, 0.000e+00f},
+    {6.624e-03f, 0.000e+00f, 0.000e+00f},
+    {2.223e-03f, 0.000e+00f, 0.000e+00f},
+    {1.093e-03f, 0.000e+00f, 0.000e+00f},
+    {5.361e-03f, 0.000e+00f, 0.000e+00f},
+    {1.427e-02f, 0.000e+00f, 0.000e+00f}
 };
 
-// capture cross sections in by energy group and region
+// sigma c by energy group and region
 __constant__ float d_sigma_c[NUM_GROUPS][NUM_REGIONS] = {
-    {1.41e-6f, 1.71e-2f, 3.34e-6f},
-    {1.34e-3f, 7.83e-3f, 3.34e-6f},
-    {1.10e-2f, 2.83e-4f, 2.56e-7f},
-    {3.29e-2f, 4.52e-6f, 6.63e-7f},
-    {8.23e-2f, 1.06e-5f, 2.24e-7f},
-    {4.28e-2f, 4.39e-6f, 1.27e-7f},
-    {9.90e-2f, 1.25e-5f, 2.02e-7f},
-    {2.51e-1f, 3.98e-5f, 6.02e-7f},
-    {2.12e+0f, 1.26e-4f, 1.84e-6f},
-    {4.30e+0f, 3.95e-4f, 5.76e-6f}
+    {1.677e-01f, 1.770e-02f, 8.655e-02f},
+    {7.489e-02f, 8.412e-03f, 4.093e-02f},
+    {2.141e-02f, 2.456e-03f, 1.190e-02f},
+    {1.223e-01f, 7.625e-04f, 3.681e-03f},
+    {7.266e-02f, 2.363e-04f, 1.163e-03f},
+    {2.845e-02f, 6.737e-05f, 3.654e-04f},
+    {1.529e-02f, 2.358e-04f, 1.113e-04f},
+    {4.749e-03f, 1.129e-04f, 3.218e-05f},
+    {2.050e-03f, 3.086e-05f, 1.363e-05f},
+    {1.978e-03f, 1.349e-03f, 1.317e-03f}
 };
 
-// scattering cross sections in by energy group and region
+// sigma s by energy group and region
 __constant__ float d_sigma_s[NUM_GROUPS][NUM_REGIONS] = {
-    {2.76e-1f, 1.44e-1f, 1.27e-2f},
-    {3.88e-1f, 1.76e-1f, 7.36e-2f},
-    {4.77e-1f, 3.44e-1f, 2.65e-1f},
-    {6.88e-1f, 2.66e-1f, 5.72e-1f},
-    {9.38e-1f, 2.06e-1f, 6.69e-1f},
-    {1.52e+0f, 2.14e-1f, 6.81e-1f},
-    {2.30e+0f, 2.23e-1f, 6.82e-1f},
-    {2.45e+0f, 2.31e-1f, 6.83e-1f},
-    {9.79e+0f, 2.40e-1f, 6.86e-1f},
-    {4.36e+1f, 2.41e-1f, 6.91e-1f}
+    {4.121e-01f, 8.862e-02f, 4.157e+00f},
+    {4.039e-01f, 8.649e-02f, 2.577e+00f},
+    {3.967e-01f, 8.593e-02f, 1.608e+00f},
+    {4.044e-01f, 8.583e-02f, 1.498e+00f},
+    {5.272e-01f, 8.540e-02f, 1.493e+00f},
+    {4.985e-01f, 8.195e-02f, 1.483e+00f},
+    {5.012e-01f, 6.489e-02f, 1.396e+00f},
+    {4.332e-01f, 3.179e-01f, 9.345e-01f},
+    {3.197e-01f, 2.065e-01f, 3.995e-01f},
+    {2.543e-01f, 1.371e-01f, 1.845e-01f}
 };
+
+
+// // Energy group lower bounds
+// __constant__ float d_GROUP_ENERGY[NUM_GROUPS] = {
+//     3.0e+1f, 3.0e+0f, 3.0e-1f, 3.0e-2f, 3.0e-3f,
+//     3.0e-4f, 3.0e-5f, 3.0e-6f, 3.0e-7f, 3.0e-8f
+// };
+//
+// // fission cross sections in by energy group and region
+// __constant__ float d_sigma_f[NUM_GROUPS][NUM_REGIONS] = {
+//     {1.05e-1f, 0.0f, 0.0f},
+//     {5.96e-2f, 0.0f, 0.0f},
+//     {6.02e-2f, 0.0f, 0.0f},
+//     {1.06e-1f, 0.0f, 0.0f},
+//     {2.46e-1f, 0.0f, 0.0f},
+//     {2.50e-1f, 0.0f, 0.0f},
+//     {1.07e-1f, 0.0f, 0.0f},
+//     {1.28e+0f, 0.0f, 0.0f},
+//     {9.30e+0f, 0.0f, 0.0f},
+//     {2.58e+1f, 0.0f, 0.0f}
+// };
+//
+// // capture cross sections in by energy group and region
+// __constant__ float d_sigma_c[NUM_GROUPS][NUM_REGIONS] = {
+//     {1.41e-6f, 1.71e-2f, 3.34e-6f},
+//     {1.34e-3f, 7.83e-3f, 3.34e-6f},
+//     {1.10e-2f, 2.83e-4f, 2.56e-7f},
+//     {3.29e-2f, 4.52e-6f, 6.63e-7f},
+//     {8.23e-2f, 1.06e-5f, 2.24e-7f},
+//     {4.28e-2f, 4.39e-6f, 1.27e-7f},
+//     {9.90e-2f, 1.25e-5f, 2.02e-7f},
+//     {2.51e-1f, 3.98e-5f, 6.02e-7f},
+//     {2.12e+0f, 1.26e-4f, 1.84e-6f},
+//     {4.30e+0f, 3.95e-4f, 5.76e-6f}
+// };
+//
+// // scattering cross sections in by energy group and region
+// __constant__ float d_sigma_s[NUM_GROUPS][NUM_REGIONS] = {
+//     {2.76e-1f, 1.44e-1f, 1.27e-2f},
+//     {3.88e-1f, 1.76e-1f, 7.36e-2f},
+//     {4.77e-1f, 3.44e-1f, 2.65e-1f},
+//     {6.88e-1f, 2.66e-1f, 5.72e-1f},
+//     {9.38e-1f, 2.06e-1f, 6.69e-1f},
+//     {1.52e+0f, 2.14e-1f, 6.81e-1f},
+//     {2.30e+0f, 2.23e-1f, 6.82e-1f},
+//     {2.45e+0f, 2.31e-1f, 6.83e-1f},
+//     {9.79e+0f, 2.40e-1f, 6.86e-1f},
+//     {4.36e+1f, 2.41e-1f, 6.91e-1f}
+// };
 
 __device__ __forceinline__
 XS CrossSections(float Energy, int region)
