@@ -150,7 +150,7 @@ __global__ void move_kernel(
 #if DEBUG_TRANSPORT
         float radius = sqrtf(neutron.x * neutron.x + neutron.y * neutron.y);
         float r_clad_out = DEFAULT_GEOMETRY.r_clad_out;
-        const float region_eps = 1.0e-5f;
+        const float region_eps = 1.0e-4f;
         bool valid_region = true;
 
         if (region == FUEL) {
@@ -183,7 +183,7 @@ __global__ void move_kernel(
         // Move particle to geometric boundary
         neutron.x += dmin * neutron.ux;
         neutron.y += dmin * neutron.uy;
-        const float boundary_eps = 1.0e-5f;
+        const float boundary_eps = 1.0e-4f;
 
         if (surface == SURFACE_FUEL) {
 #if DEBUG_TRANSPORT
@@ -370,7 +370,8 @@ __global__ void collision_kernel(const Neutron *collision_queue,
   else {
     local_tallies.scattering = 1;
 
-    float mass_number = 1.00794f;
+    // float mass_number = 1.00794f;
+    float mass_number = 6.0f;
     if (neutron.region == FUEL) {
       mass_number = 238.02891f;
     } else if (neutron.region == CLAD) {

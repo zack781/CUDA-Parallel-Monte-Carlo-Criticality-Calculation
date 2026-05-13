@@ -19,7 +19,7 @@ water.add_element('H', 2.0)
 water.add_element('O', 1.0)
 water.set_density('g/cm3', 1.0)
 water.add_s_alpha_beta('c_H_in_H2O')
-water.add_element('B', 0.0018)
+water.add_element('B', 0.0017)
 
 mats = openmc.Materials([uo2, aluminum, water])
 mats.export_to_xml()
