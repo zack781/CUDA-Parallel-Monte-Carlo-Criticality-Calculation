@@ -19,7 +19,7 @@ CUDA-Parallel-Monte-Carlo-Criticality-Calculation/
 The transport executable accepts optional tail-truncation arguments:
 
 ```bash
-./transport_sim [neutrons] [generations] [batch_size] [tail_fraction]
+./transport_sim [neutrons] [generations] [tail_fraction]
 ```
 
 `tail_fraction` stops a generation once the active movement queue falls below that fraction of the original source population. For example, `0.001` truncates when fewer than `0.1%` of the source particles remain active.

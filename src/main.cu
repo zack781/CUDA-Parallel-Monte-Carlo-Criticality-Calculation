@@ -10,7 +10,6 @@
 
 #define DEFAULT_NEUTRONS 10000
 #define DEFAULT_GENERATIONS 10
-#define DEFAULT_BATCH_SIZE 10
 #define QUEUE_MULTIPLIER 10
 #define FUEL_RADIUS 0.53
 
@@ -21,12 +20,11 @@
 int main(int argc, char **argv) {
     int N = argc > 1 ? std::atoi(argv[1]) : DEFAULT_NEUTRONS;
     int num_generations = argc > 2 ? std::atoi(argv[2]) : DEFAULT_GENERATIONS;
-    int batch_size = argc > 3 ? std::atoi(argv[3]) : DEFAULT_BATCH_SIZE;
-    float tail_fraction = argc > 4 ? std::atof(argv[4]) : 0.0f;
+    float tail_fraction = argc > 3 ? std::atof(argv[3]) : 0.0f;
 
-    if (N <= 0 || num_generations <= 0 || batch_size <= 0 ||
-        tail_fraction < 0.0f || tail_fraction >= 1.0f || argc > 5) {
-        printf("Usage: %s [neutrons] [generations] [batch_size] [tail_fraction]\n", argv[0]);
+    if (N <= 0 || num_generations <= 0 ||
+        tail_fraction < 0.0f || tail_fraction >= 1.0f || argc > 4) {
+        printf("Usage: %s [neutrons] [generations] [tail_fraction]\n", argv[0]);
         return 1;
     }
 
@@ -37,8 +35,8 @@ int main(int argc, char **argv) {
         tail_cutoff = 1;
     }
 
-    printf("Config: neutrons=%d generations=%d batch_size=%d queue_capacity=%d tail_cutoff=%d\n",
-           N, num_generations, batch_size, queue_capacity, tail_cutoff);
+    printf("Config: neutrons=%d generations=%d queue_capacity=%d tail_cutoff=%d\n",
+           N, num_generations, queue_capacity, tail_cutoff);
 
     curandState *d_rng_states;
     Neutron *d_source_particles;
@@ -116,40 +114,40 @@ int main(int argc, char **argv) {
                 break;
             }
 
-            for (int step = 0; step < batch_size && iter < max_iterations; ++step, ++iter) {
-                reset_counts_kernel<<<1, 1>>>(d_next_move_count, d_collision_count);
-                CUDA_CHECK(cudaGetLastError());
-                move_kernel<<<active_blocks, threads>>>(
-                    d_move_queue, d_move_count,
-                    d_next_move_queue, d_next_move_count,
-                    d_collision_queue, d_collision_count,
-                    d_global_tallies,
-                    d_region_correction,
-                    queue_capacity,
-                    r_fuel
-                );
-                CUDA_CHECK(cudaGetLastError());
+            reset_counts_kernel<<<1, 1>>>(d_next_move_count, d_collision_count);
+            CUDA_CHECK(cudaGetLastError());
+            move_kernel<<<active_blocks, threads>>>(
+                d_move_queue, d_move_count,
+                d_next_move_queue, d_next_move_count,
+                d_collision_queue, d_collision_count,
+                d_global_tallies,
+                d_region_correction,
+                queue_capacity,
+                r_fuel
+            );
+            CUDA_CHECK(cudaGetLastError());
 
-                collision_kernel<<<active_blocks, threads>>>(
-                    d_collision_queue, d_collision_count,
-                    d_next_move_queue, d_next_move_count,
-                    d_fission_bank, fission_bank_capacity,
-                    d_fission_bank_count,
-                    d_history_tallies,
-                    d_global_tallies,
-                    d_region_correction,
-                    queue_capacity
-                );
-                CUDA_CHECK(cudaGetLastError());
+            collision_kernel<<<active_blocks, threads>>>(
+                d_collision_queue, d_collision_count,
+                d_next_move_queue, d_next_move_count,
+                d_fission_bank, fission_bank_capacity,
+                d_fission_bank_count,
+                d_history_tallies,
+                d_global_tallies,
+                d_region_correction,
+                queue_capacity
+            );
+            CUDA_CHECK(cudaGetLastError());
 
-                Neutron *temp_queue = d_move_queue;
-                d_move_queue = d_next_move_queue;
-                d_next_move_queue = temp_queue;
+            Neutron *temp_queue = d_move_queue;
+            d_move_queue = d_next_move_queue;
+            d_next_move_queue = temp_queue;
 
-                int *temp_count = d_move_count;
-                d_move_count = d_next_move_count;
-                d_next_move_count = temp_count;
-            }
+            int *temp_count = d_move_count;
+            d_move_count = d_next_move_count;
+            d_next_move_count = temp_count;
+
+            ++iter;
 
             CUDA_CHECK(cudaMemcpy(&move_count, d_move_count, sizeof(int), cudaMemcpyDeviceToHost));
         }
