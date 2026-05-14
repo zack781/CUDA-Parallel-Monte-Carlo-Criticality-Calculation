@@ -17,6 +17,7 @@
 #define DEFAULT_BATCH_SIZE 10
 #define QUEUE_MULTIPLIER 10
 #define FUEL_RADIUS 0.53
+#define SORT_INTERVAL 5
 
 // move_queue: contains neutrons that need to be moved to their next event
 // next_move_queue: contains neutrons that hit a geometric boundary and need transport in the next iteration
@@ -129,13 +130,7 @@ int main(int argc, char **argv) {
                 CUDA_CHECK(cudaMemcpyAsync(d_next_move_count, &zero, sizeof(int), cudaMemcpyHostToDevice));
                 CUDA_CHECK(cudaMemcpyAsync(d_collision_count, &zero, sizeof(int), cudaMemcpyHostToDevice));
 
-                // Sort move_queue by region so each warp handles a single region,
-                // eliminating the three-way branch divergence in move_kernel.
-                // We copy region values to a scratch key buffer first so the original
-                // SoA field is untouched; the resulting permutation in d_sort_idx is
-                // then applied by gather_kernel, which writes sorted output into
-                // d_next_move_queue. A pointer swap makes that the new move_queue.
-                {
+                if (iter % SORT_INTERVAL == 0) {
                     thrust::device_ptr<int> keys(d_sort_keys);
                     thrust::device_ptr<int> idx(d_sort_idx);
                     thrust::copy(thrust::device,
@@ -146,8 +141,8 @@ int main(int argc, char **argv) {
                     thrust::sort_by_key(thrust::device, keys, keys + move_count, idx);
                     gather_kernel<<<active_blocks, threads>>>(
                         d_move_queue, d_sort_idx, move_count, d_next_move_queue);
-                    NeutronSoA tmp  = d_move_queue;
-                    d_move_queue    = d_next_move_queue;
+                    NeutronSoA tmp    = d_move_queue;
+                    d_move_queue      = d_next_move_queue;
                     d_next_move_queue = tmp;
                 }
 
