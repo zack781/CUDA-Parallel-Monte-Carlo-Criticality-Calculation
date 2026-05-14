@@ -24,7 +24,7 @@ void init_rng(curandState *states, unsigned long seed, int n)
 __global__
 void initialize_neutrons(
     curandState *states,
-    Neutron *neutrons,
+    NeutronSoA neutrons,
     float r_fuel,
     int n
 )
@@ -35,23 +35,18 @@ void initialize_neutrons(
 
     curandState local_state = states[tid];
 
-    // Initial position: uniformly distributed in fuel area
     float theta_pos = 2.0f * PI * random_uniform(&local_state);
     float u = random_uniform(&local_state);
     float r = r_fuel * sqrtf(u);
 
-    neutrons[tid].x = r * cosf(theta_pos);
-    neutrons[tid].y = r * sinf(theta_pos);
-
-    // Direction is sampled in move_kernel when regionchange == 0.
-    neutrons[tid].ux = 1.0f;
-    neutrons[tid].uy = 0.0f;
-    neutrons[tid].Energy = sample_initial_energy(&local_state);
-
-    // Initial source is inside fuel
-    neutrons[tid].region = FUEL;
-    neutrons[tid].regionchange = 0;
-    neutrons[tid].rng_state = local_state;
+    neutrons.x[tid]            = r * cosf(theta_pos);
+    neutrons.y[tid]            = r * sinf(theta_pos);
+    neutrons.ux[tid]           = 1.0f;
+    neutrons.uy[tid]           = 0.0f;
+    neutrons.Energy[tid]       = sample_initial_energy(&local_state);
+    neutrons.region[tid]       = FUEL;
+    neutrons.regionchange[tid] = 0;
+    neutrons.rng_state[tid]    = local_state;
 
     states[tid] = local_state;
 }

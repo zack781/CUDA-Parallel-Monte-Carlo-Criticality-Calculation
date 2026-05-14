@@ -34,32 +34,41 @@ int main(int argc, char **argv) {
            N, num_generations, batch_size, queue_capacity);
 
     curandState *d_rng_states;
-    Neutron *d_source_particles;
-    CUDA_CHECK(cudaMalloc(&d_source_particles, N * sizeof(Neutron)));
-
     CUDA_CHECK(cudaMalloc(&d_rng_states, queue_capacity * sizeof(curandState)));
 
     int threads = 256;
     int blocks = (N + threads - 1) / threads;
     int capacity_blocks = (queue_capacity + threads - 1) / threads;
 
+    init_cross_sections();
     init_rng<<<capacity_blocks, threads>>>(d_rng_states, 1234UL, queue_capacity);
     CUDA_CHECK(cudaGetLastError());
     CUDA_CHECK(cudaDeviceSynchronize());
 
-    // Initialize
-    Neutron *d_move_queue;
-    Neutron *d_next_move_queue;
-    Neutron *d_collision_queue;
-    Neutron *d_fission_bank;
+    NeutronSoA d_move_queue;
+    NeutronSoA d_next_move_queue;
+    NeutronSoA d_collision_queue;
+    NeutronSoA d_fission_bank;
     HistoryTallies *d_history_tallies;
     Tallies *d_global_tallies;
 
-    CUDA_CHECK(cudaMalloc(&d_move_queue, queue_capacity * sizeof(Neutron)));
-    CUDA_CHECK(cudaMalloc(&d_next_move_queue, queue_capacity * sizeof(Neutron)));
-    CUDA_CHECK(cudaMalloc(&d_collision_queue, queue_capacity * sizeof(Neutron)));
+    auto alloc_soa = [](NeutronSoA &soa, int capacity) {
+        cudaMalloc(&soa.x,            capacity * sizeof(float));
+        cudaMalloc(&soa.y,            capacity * sizeof(float));
+        cudaMalloc(&soa.Energy,       capacity * sizeof(float));
+        cudaMalloc(&soa.ux,           capacity * sizeof(float));
+        cudaMalloc(&soa.uy,           capacity * sizeof(float));
+        cudaMalloc(&soa.region,       capacity * sizeof(int));
+        cudaMalloc(&soa.regionchange, capacity * sizeof(int));
+        cudaMalloc(&soa.rng_state,    capacity * sizeof(curandState));
+    };
+
+    alloc_soa(d_move_queue,      queue_capacity);
+    alloc_soa(d_next_move_queue, queue_capacity);
+    alloc_soa(d_collision_queue, queue_capacity);
     int fission_bank_capacity = queue_capacity;
-    CUDA_CHECK(cudaMalloc(&d_fission_bank, fission_bank_capacity * sizeof(Neutron)));
+    alloc_soa(d_fission_bank, fission_bank_capacity);
+
     CUDA_CHECK(cudaMalloc(&d_history_tallies, queue_capacity * sizeof(HistoryTallies)));
     CUDA_CHECK(cudaMalloc(&d_global_tallies, sizeof(Tallies)));
     CUDA_CHECK(cudaMemset(d_global_tallies, 0, sizeof(Tallies)));
@@ -76,11 +85,9 @@ int main(int argc, char **argv) {
 
     int move_count = 0;
 
-    initialize_neutrons<<<blocks, threads>>>(d_rng_states, d_source_particles, r_fuel, N);
+    initialize_neutrons<<<blocks, threads>>>(d_rng_states, d_move_queue, r_fuel, N);
     CUDA_CHECK(cudaGetLastError());
     CUDA_CHECK(cudaDeviceSynchronize());
-    // cudaMemcpy(d_move_queue, neutrons, N * sizeof(Neutron), H2D);
-    CUDA_CHECK(cudaMemcpy(d_move_queue, d_source_particles, N * sizeof(Neutron), cudaMemcpyDeviceToDevice));
     move_count = N;
     CUDA_CHECK(cudaMemcpy(d_move_count, &move_count, sizeof(int), cudaMemcpyHostToDevice));
 
@@ -106,8 +113,8 @@ int main(int argc, char **argv) {
             }
 
             for (int step = 0; step < batch_size && iter < max_iterations; ++step, ++iter) {
-                CUDA_CHECK(cudaMemcpy(d_next_move_count, &zero, sizeof(int), cudaMemcpyHostToDevice));
-                CUDA_CHECK(cudaMemcpy(d_collision_count, &zero, sizeof(int), cudaMemcpyHostToDevice));
+                CUDA_CHECK(cudaMemcpyAsync(d_next_move_count, &zero, sizeof(int), cudaMemcpyHostToDevice));
+                CUDA_CHECK(cudaMemcpyAsync(d_collision_count, &zero, sizeof(int), cudaMemcpyHostToDevice));
                 move_kernel<<<active_blocks, threads>>>(
                     d_move_queue, d_move_count,
                     d_next_move_queue, d_next_move_count,
@@ -129,7 +136,7 @@ int main(int argc, char **argv) {
                 );
                 CUDA_CHECK(cudaGetLastError());
 
-                Neutron *temp_queue = d_move_queue;
+                NeutronSoA temp_queue = d_move_queue;
                 d_move_queue = d_next_move_queue;
                 d_next_move_queue = temp_queue;
 
@@ -139,7 +146,7 @@ int main(int argc, char **argv) {
             }
 
             CUDA_CHECK(cudaMemcpy(&move_count, d_move_count, sizeof(int), cudaMemcpyDeviceToHost));
-            CUDA_CHECK(cudaMemcpy(d_collision_count, &zero, sizeof(int), cudaMemcpyHostToDevice));
+            // CUDA_CHECK(cudaMemcpy(d_collision_count, &zero, sizeof(int), cudaMemcpyHostToDevice));
         }
 
         CUDA_CHECK(cudaMemcpy(&fission_bank_count, d_fission_bank_count, sizeof(int), cudaMemcpyDeviceToHost));
@@ -205,15 +212,25 @@ int main(int argc, char **argv) {
     printf("Square Surface Crossings.................=  %llu\n", global_tallies.square_surface_crossings);
 #endif
 
+    auto free_soa = [](NeutronSoA &soa) {
+        cudaFree(soa.x);
+        cudaFree(soa.y);
+        cudaFree(soa.Energy);
+        cudaFree(soa.ux);
+        cudaFree(soa.uy);
+        cudaFree(soa.region);
+        cudaFree(soa.regionchange);
+        cudaFree(soa.rng_state);
+    };
+
     CUDA_CHECK(cudaFree(d_fission_bank_count));
     CUDA_CHECK(cudaFree(d_global_tallies));
-    CUDA_CHECK(cudaFree(d_fission_bank));
+    free_soa(d_fission_bank);
     CUDA_CHECK(cudaFree(d_history_tallies));
-    CUDA_CHECK(cudaFree(d_collision_queue));
-    CUDA_CHECK(cudaFree(d_next_move_queue));
-    CUDA_CHECK(cudaFree(d_move_queue));
+    free_soa(d_collision_queue);
+    free_soa(d_next_move_queue);
+    free_soa(d_move_queue);
     CUDA_CHECK(cudaFree(d_rng_states));
-    CUDA_CHECK(cudaFree(d_source_particles));
 
     printf("simulation ended!\n");
     return 0;

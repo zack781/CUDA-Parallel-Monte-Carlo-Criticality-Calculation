@@ -19,18 +19,8 @@ __device__ int get_energy_group(float energy) {
 
 __device__ XS get_cross_sections(float energy, int region) {
   int group = get_energy_group(energy);
-  int material = region;
-  if (material < 0 || material >= NUM_REGIONS) {
-    material = MODERATOR;
-  }
-
-  XS cross_section;
-  cross_section.sig_f = d_sigma_f[group][material];
-  cross_section.sig_c = d_sigma_c[group][material];
-  cross_section.sig_s = d_sigma_s[group][material];
-  cross_section.sig_t =
-      cross_section.sig_f + cross_section.sig_c + cross_section.sig_s;
-  return cross_section;
+  int material = (region >= 0 && region < NUM_REGIONS) ? region : MODERATOR;
+  return d_cross_sections[group][material];
 }
 
 __device__ bool closer_positive(float distance, float *best_distance) {
@@ -42,11 +32,11 @@ __device__ bool closer_positive(float distance, float *best_distance) {
   return false;
 }
 
-__device__ void check_circle_boundary(const Neutron &neutron, float radius,
-                                      SurfaceId boundary_surface,
+__device__ void check_circle_boundary(float x, float y, float ux, float uy,
+                                      float radius, SurfaceId boundary_surface,
                                       float *best_distance, SurfaceId *surface) {
-  float b = 2.0f * (neutron.x * neutron.ux + neutron.y * neutron.uy);
-  float c = neutron.x * neutron.x + neutron.y * neutron.y - radius * radius;
+  float b = 2.0f * (x * ux + y * uy);
+  float c = x * x + y * y - radius * radius;
   float delta = b * b - 4.0f * c;
   if (delta < 0.0f) {
     return;
@@ -82,40 +72,38 @@ __device__ int reserve_queue_slots(int *count, int requested, int capacity,
 } // namespace
 
 __global__ void move_kernel(
-    const Neutron *move_queue,
+    NeutronSoA move_queue,
     int *move_count,
-    Neutron *next_move_queue,
+    NeutronSoA next_move_queue,
     int *next_move_count,
-    Neutron *collision_queue,
+    NeutronSoA collision_queue,
     int *collision_count,
     Tallies *global_tallies,
-    // HistoryTallies *history_tallies,
     int queue_capacity,
     float r_fuel
 ) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= *move_count) return;
 
-    Neutron neutron = move_queue[i];
-
-    float E = neutron.Energy;
-    int region = neutron.region;
+    float x           = move_queue.x[i];
+    float y           = move_queue.y[i];
+    float E           = move_queue.Energy[i];
+    float ux          = move_queue.ux[i];
+    float uy          = move_queue.uy[i];
+    int region        = move_queue.region[i];
+    int regionchange  = move_queue.regionchange[i];
+    curandState local_state = move_queue.rng_state[i];
 
     XS xs = get_cross_sections(E, region);
-    float sig_t = xs.sig_t; // this is the total cross section
+    float sig_t = xs.sig_t;
 
-    curandState local_state = neutron.rng_state;
-
-    if (neutron.regionchange == 0) {
-        sample_isotropic_direction(&local_state, &neutron.ux, &neutron.uy);
+    if (regionchange == 0) {
+        sample_isotropic_direction(&local_state, &ux, &uy);
     } else {
-        neutron.regionchange = 0;
+        regionchange = 0;
     }
 
     float xi = random_uniform(&local_state);
-
-    // sample free-flight distance (python version): d = -(1.0 / sig[3]) * np.log(np.random.random())
-    // equivalent to: d = -(1.0 / sig_t) * log(a random float number between 0.0 and 1.0)
     float d = -logf(xi) / sig_t;
 
     float dmin = INFINITY;
@@ -124,23 +112,23 @@ __global__ void move_kernel(
     float half_pitch = 0.5f * DEFAULT_GEOMETRY.pitch;
 
     if (region == FUEL) {
-        check_circle_boundary(neutron, r_fuel, SURFACE_FUEL, &dmin, &surface);
+        check_circle_boundary(x, y, ux, uy, r_fuel, SURFACE_FUEL, &dmin, &surface);
     } else if (region == CLAD) {
-        check_circle_boundary(neutron, r_fuel, SURFACE_FUEL, &dmin, &surface);
-        check_circle_boundary(neutron, r_clad_out, SURFACE_CLAD_OUTER, &dmin, &surface);
+        check_circle_boundary(x, y, ux, uy, r_fuel, SURFACE_FUEL, &dmin, &surface);
+        check_circle_boundary(x, y, ux, uy, r_clad_out, SURFACE_CLAD_OUTER, &dmin, &surface);
     } else {
-        check_circle_boundary(neutron, r_clad_out, SURFACE_CLAD_OUTER, &dmin, &surface);
+        check_circle_boundary(x, y, ux, uy, r_clad_out, SURFACE_CLAD_OUTER, &dmin, &surface);
 
-        if (neutron.ux > 0.0f && closer_positive((half_pitch - neutron.x) / neutron.ux, &dmin)) {
+        if (ux > 0.0f && closer_positive((half_pitch - x) / ux, &dmin)) {
             surface = SURFACE_X_MAX;
         }
-        if (neutron.ux < 0.0f && closer_positive((-half_pitch - neutron.x) / neutron.ux, &dmin)) {
+        if (ux < 0.0f && closer_positive((-half_pitch - x) / ux, &dmin)) {
             surface = SURFACE_X_MIN;
         }
-        if (neutron.uy > 0.0f && closer_positive((half_pitch - neutron.y) / neutron.uy, &dmin)) {
+        if (uy > 0.0f && closer_positive((half_pitch - y) / uy, &dmin)) {
             surface = SURFACE_Y_MAX;
         }
-        if (neutron.uy < 0.0f && closer_positive((-half_pitch - neutron.y) / neutron.uy, &dmin)) {
+        if (uy < 0.0f && closer_positive((-half_pitch - y) / uy, &dmin)) {
             surface = SURFACE_Y_MIN;
         }
     }
@@ -148,7 +136,7 @@ __global__ void move_kernel(
     if (surface == SURFACE_NONE) {
         atomicAdd(&global_tallies->lost_no_surface, 1ULL);
 #if DEBUG_TRANSPORT
-        float radius = sqrtf(neutron.x * neutron.x + neutron.y * neutron.y);
+        float radius = sqrtf(x * x + y * y);
         float r_clad_out = DEFAULT_GEOMETRY.r_clad_out;
         const float region_eps = 1.0e-4f;
         bool valid_region = true;
@@ -163,8 +151,8 @@ __global__ void move_kernel(
         } else {
             atomicAdd(&global_tallies->lost_no_surface_moderator, 1ULL);
             float half_pitch = 0.5f * DEFAULT_GEOMETRY.pitch;
-            bool inside_cell = fabsf(neutron.x) <= half_pitch + region_eps &&
-                               fabsf(neutron.y) <= half_pitch + region_eps;
+            bool inside_cell = fabsf(x) <= half_pitch + region_eps &&
+                               fabsf(y) <= half_pitch + region_eps;
             valid_region = radius >= r_clad_out - region_eps && inside_cell;
         }
 
@@ -177,12 +165,9 @@ __global__ void move_kernel(
         return;
     }
 
-    // HistoryTallies local_tallies = {};
-
     if (d >= dmin) {
-        // Move particle to geometric boundary
-        neutron.x += dmin * neutron.ux;
-        neutron.y += dmin * neutron.uy;
+        x += dmin * ux;
+        y += dmin * uy;
         const float boundary_eps = 1.0e-4f;
 
         if (surface == SURFACE_FUEL) {
@@ -193,84 +178,71 @@ __global__ void move_kernel(
                 atomicAdd(&global_tallies->clad_surface_crossings, 1ULL);
             }
 #endif
-            neutron.region = region == FUEL ? CLAD : FUEL;
-            neutron.regionchange = 1;
-            neutron.x += boundary_eps * neutron.ux;
-            neutron.y += boundary_eps * neutron.uy;
+            region = (region == FUEL) ? CLAD : FUEL;
+            regionchange = 1;
+            x += boundary_eps * ux;
+            y += boundary_eps * uy;
         } else if (surface == SURFACE_CLAD_OUTER) {
 #if DEBUG_TRANSPORT
             if (region == CLAD) {
                 atomicAdd(&global_tallies->clad_surface_crossings, 1ULL);
             }
 #endif
-            neutron.region = region == CLAD ? MODERATOR : CLAD;
-            neutron.regionchange = 1;
-            neutron.x += boundary_eps * neutron.ux;
-            neutron.y += boundary_eps * neutron.uy;
+            region = (region == CLAD) ? MODERATOR : CLAD;
+            regionchange = 1;
+            x += boundary_eps * ux;
+            y += boundary_eps * uy;
         } else {
 #if DEBUG_TRANSPORT
             atomicAdd(&global_tallies->square_surface_crossings, 1ULL);
 #endif
             if (surface == SURFACE_X_MAX || surface == SURFACE_X_MIN) {
-                // neutron.x = -neutron.x;
-                neutron.ux = -neutron.ux;
+                ux = -ux;
             } else {
-                // neutron.y = -neutron.y;
-                neutron.uy = -neutron.uy;
+                uy = -uy;
             }
-            neutron.region = MODERATOR;
-            neutron.regionchange = 1;
-            // atomicAdd(&global_tallies->leakage, 1ULL);
+            region = MODERATOR;
+            regionchange = 1;
         }
 
         int reserved = 0;
         int idx = reserve_queue_slots(next_move_count, 1, queue_capacity, &reserved);
         if (reserved == 1) {
-            neutron.rng_state = local_state;
-            next_move_queue[idx] = neutron;
+            next_move_queue.x[idx]           = x;
+            next_move_queue.y[idx]           = y;
+            next_move_queue.Energy[idx]      = E;
+            next_move_queue.ux[idx]          = ux;
+            next_move_queue.uy[idx]          = uy;
+            next_move_queue.region[idx]      = region;
+            next_move_queue.regionchange[idx] = regionchange;
+            next_move_queue.rng_state[idx]   = local_state;
         } else {
             atomicAdd(&global_tallies->queue_overflow, 1ULL);
         }
     } else {
-        // Move particle to collision site
-        neutron.x += d * neutron.ux;
-        neutron.y += d * neutron.uy;
+        x += d * ux;
+        y += d * uy;
 
         int reserved = 0;
         int idx = reserve_queue_slots(collision_count, 1, queue_capacity, &reserved);
         if (reserved == 1) {
-            neutron.rng_state = local_state;
-            collision_queue[idx] = neutron;
+            collision_queue.x[idx]           = x;
+            collision_queue.y[idx]           = y;
+            collision_queue.Energy[idx]      = E;
+            collision_queue.ux[idx]          = ux;
+            collision_queue.uy[idx]          = uy;
+            collision_queue.region[idx]      = region;
+            collision_queue.regionchange[idx] = regionchange;
+            collision_queue.rng_state[idx]   = local_state;
         } else {
             atomicAdd(&global_tallies->queue_overflow, 1ULL);
         }
     }
-
-
-    // TODO: Process one movement event.
-    // - get per-thread RNG state from rng.cu
-    // - look up cross sections for neutron.Energy and neutron.region
-    // - compute distance to nearest boundary
-    // - compute fuel/clad/square boundary candidates
-    // - mask invalid boundaries by region
-    // - pick nearest valid boundary
-    // - compute distance to next collision
-    // - move neutron to whichever event is closer
-    // - if boundary is closer:
-    // - update cell/material
-    // - update fuel/clad surface tallies in local_tallies
-    // - apply periodic boundary wrapping and leakage tally if needed
-    // - push neutron to next_move_queue
-    // - if collision is closer:
-    // - push neutron to collision_queue
-    // - collision_kernel will sample scatter/capture/fission
-
-    // history_tallies[i] = local_tallies;
 }
 
-__global__ void collision_kernel(const Neutron *collision_queue,
-                                 const int *collision_count, Neutron *next_move_queue,
-                                 int *next_move_count, Neutron *fission_bank,
+__global__ void collision_kernel(NeutronSoA collision_queue,
+                                 const int *collision_count, NeutronSoA next_move_queue,
+                                 int *next_move_count, NeutronSoA fission_bank,
                                  int fission_bank_capacity,
                                  int *fission_bank_count,
                                  HistoryTallies *history_tallies,
@@ -280,12 +252,18 @@ __global__ void collision_kernel(const Neutron *collision_queue,
   if (i >= *collision_count)
     return;
 
-  Neutron neutron = collision_queue[i];
-  HistoryTallies local_tallies = {};
-  curandState local_state = neutron.rng_state;
+  float x          = collision_queue.x[i];
+  float y          = collision_queue.y[i];
+  float Energy     = collision_queue.Energy[i];
+  float ux         = collision_queue.ux[i];
+  float uy         = collision_queue.uy[i];
+  int region       = collision_queue.region[i];
+  int regionchange = collision_queue.regionchange[i];
+  curandState local_state = collision_queue.rng_state[i];
 
-  XS cross_section =
-      get_cross_sections(neutron.Energy, neutron.region);
+  HistoryTallies local_tallies = {};
+
+  XS cross_section = get_cross_sections(Energy, region);
   if (cross_section.sig_t <= 0.0f) {
     history_tallies[i] = local_tallies;
     return;
@@ -295,12 +273,6 @@ __global__ void collision_kernel(const Neutron *collision_queue,
   float fission_probability = cross_section.sig_f / cross_section.sig_t;
   float capture_probability = cross_section.sig_c / cross_section.sig_t;
 
-  // Warp-aggregated append:
-  // 1. mark which lanes in this warp are adding particles
-  // 2. count how many total output slots the warp needs
-  // 3. one lane reserves all slots
-  // 4. each lane writes at reserved_base + its local offset
-
   // Fission: lanes where fission_neutrons > 0 add children.
   if (reaction_sample <= fission_probability) {
     local_tallies.fission = 1;
@@ -309,7 +281,6 @@ __global__ void collision_kernel(const Neutron *collision_queue,
     local_tallies.neutrons_produced = fission_neutrons;
 
     unsigned int active_fission_mask = __activemask();
-    // mask of lanes where fission_neutrons > 0 (fission lanes)
     unsigned int fission_lane_mask =
         __ballot_sync(active_fission_mask, fission_neutrons > 0);
     int lane = threadIdx.x & 31;
@@ -320,7 +291,6 @@ __global__ void collision_kernel(const Neutron *collision_queue,
     for (int source_lane = 0; source_lane < 32; ++source_lane) {
       unsigned int source_bit = 1u << source_lane;
       if ((fission_lane_mask & source_bit) != 0) {
-        // share total number of fission neutrons within warps
         int source_items =
             __shfl_sync(fission_lane_mask, fission_neutrons, source_lane);
         total_items += source_items;
@@ -330,12 +300,10 @@ __global__ void collision_kernel(const Neutron *collision_queue,
       }
     }
 
-    // get the first lane that has to write
     int leader = __ffs(fission_lane_mask) - 1;
     int bank_index = 0;
     int reserved_items = 0;
     if (lane == leader) {
-      // leader reserves spot in queue
       bank_index = reserve_queue_slots(fission_bank_count, total_items,
                                        fission_bank_capacity, &reserved_items);
       if (reserved_items < total_items) {
@@ -344,19 +312,22 @@ __global__ void collision_kernel(const Neutron *collision_queue,
       }
     }
 
-    // share queue spot with rest of warp
     bank_index = __shfl_sync(fission_lane_mask, bank_index, leader) + lane_offset;
     reserved_items = __shfl_sync(fission_lane_mask, reserved_items, leader);
 
     for (int child = 0; child < fission_neutrons; ++child) {
       int output_index = bank_index + child;
       if (lane_offset + child < reserved_items) {
-        Neutron fission_neutron = neutron;
-        sample_isotropic_direction(&local_state, &fission_neutron.ux,
-                                   &fission_neutron.uy);
-        fission_neutron.regionchange = 1;
-        fission_neutron.rng_state = local_state;
-        fission_bank[output_index] = fission_neutron;
+        float f_ux, f_uy;
+        sample_isotropic_direction(&local_state, &f_ux, &f_uy);
+        fission_bank.x[output_index]            = x;
+        fission_bank.y[output_index]            = y;
+        fission_bank.Energy[output_index]       = Energy;
+        fission_bank.ux[output_index]           = f_ux;
+        fission_bank.uy[output_index]           = f_uy;
+        fission_bank.region[output_index]       = region;
+        fission_bank.regionchange[output_index] = 1;
+        fission_bank.rng_state[output_index]    = local_state;
       }
     }
   }
@@ -370,26 +341,17 @@ __global__ void collision_kernel(const Neutron *collision_queue,
   else {
     local_tallies.scattering = 1;
 
-    // float mass_number = 1.00794f;
     float mass_number = 4.5f;
-    if (neutron.region == FUEL) {
+    if (region == FUEL) {
       mass_number = 238.02891f;
-    } else if (neutron.region == CLAD) {
+    } else if (region == CLAD) {
       mass_number = 26.981539f;
     }
 
-    // compute collisions (same as QMC)
-    // float mass_ratio = (mass_number - 1.0f) / (mass_number + 1.0f);
-    // float ksi = 1.0f + logf(mass_ratio) * (mass_number - 1.0f) *
-    //                        (mass_number - 1.0f) / (2.0f * mass_number);
-    // neutron.Energy *= expf(-ksi);
-
     float alpha = powf((mass_number - 1.0f) / (mass_number + 1.0f), 2.0f);
     float rand_val = random_uniform(&local_state);
-
-    // The neutron randomly loses energy anywhere between its current Energy and alpha * Energy
-    neutron.Energy *= (alpha + (1.0f - alpha) * rand_val);
-    neutron.regionchange = 0;
+    Energy *= (alpha + (1.0f - alpha) * rand_val);
+    regionchange = 0;
 
     unsigned int active_scatter_mask = __activemask();
     unsigned int scatter_lane_mask = __ballot_sync(active_scatter_mask, true);
@@ -408,13 +370,19 @@ __global__ void collision_kernel(const Neutron *collision_queue,
     output_index = __shfl_sync(scatter_lane_mask, output_index, leader) + scatter_queue_offset;
     reserved_items = __shfl_sync(scatter_lane_mask, reserved_items, leader);
 
-    neutron.rng_state = local_state;
     if (lane == leader && reserved_items < total_items) {
       atomicAdd(&global_tallies->queue_overflow,
                 static_cast<unsigned long long>(total_items - reserved_items));
     }
     if (scatter_queue_offset < reserved_items) {
-      next_move_queue[output_index] = neutron;
+      next_move_queue.x[output_index]            = x;
+      next_move_queue.y[output_index]            = y;
+      next_move_queue.Energy[output_index]       = Energy;
+      next_move_queue.ux[output_index]           = ux;
+      next_move_queue.uy[output_index]           = uy;
+      next_move_queue.region[output_index]       = region;
+      next_move_queue.regionchange[output_index] = regionchange;
+      next_move_queue.rng_state[output_index]    = local_state;
     }
   }
 
@@ -436,17 +404,24 @@ __global__ void collision_kernel(const Neutron *collision_queue,
   history_tallies[i] = local_tallies;
 }
 
-__global__ void compact_queue_kernel(const Neutron *input_queue,
+__global__ void compact_queue_kernel(NeutronSoA input_queue,
                                      const int *keep_flags,
                                      const int *output_offsets, int input_count,
-                                     Neutron *output_queue) {
+                                     NeutronSoA output_queue) {
   int i = blockIdx.x * blockDim.x + threadIdx.x;
   if (i >= input_count) {
     return;
   }
 
   if (keep_flags[i] != 0) {
-    int output_index = output_offsets[i];
-    output_queue[output_index] = input_queue[i];
+    int o = output_offsets[i];
+    output_queue.x[o]            = input_queue.x[i];
+    output_queue.y[o]            = input_queue.y[i];
+    output_queue.Energy[o]       = input_queue.Energy[i];
+    output_queue.ux[o]           = input_queue.ux[i];
+    output_queue.uy[o]           = input_queue.uy[i];
+    output_queue.region[o]       = input_queue.region[i];
+    output_queue.regionchange[o] = input_queue.regionchange[i];
+    output_queue.rng_state[o]    = input_queue.rng_state[i];
   }
 }
