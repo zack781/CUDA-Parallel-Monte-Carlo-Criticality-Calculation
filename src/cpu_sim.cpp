@@ -36,27 +36,42 @@ static const float GROUP_ENERGY[NUM_GROUPS] = {
 
 // [group][region]  (non-const so boron can be added at runtime)
 static float sigma_f[NUM_GROUPS][NUM_REGIONS] = {
-    {1.05e-1f, 0.0f, 0.0f}, {5.96e-2f, 0.0f, 0.0f},
-    {6.02e-2f, 0.0f, 0.0f}, {1.06e-1f, 0.0f, 0.0f},
-    {2.46e-1f, 0.0f, 0.0f}, {2.50e-1f, 0.0f, 0.0f},
-    {1.07e-1f, 0.0f, 0.0f}, {1.28e+0f, 0.0f, 0.0f},
-    {9.30e+0f, 0.0f, 0.0f}, {2.58e+1f, 0.0f, 0.0f}
+    {5.218e-01f, 0.000e+00f, 0.000e+00f},
+    {2.264e-01f, 0.000e+00f, 0.000e+00f},
+    {4.439e-02f, 0.000e+00f, 0.000e+00f},
+    {2.694e-02f, 0.000e+00f, 0.000e+00f},
+    {2.107e-02f, 0.000e+00f, 0.000e+00f},
+    {6.647e-03f, 0.000e+00f, 0.000e+00f},
+    {2.226e-03f, 0.000e+00f, 0.000e+00f},
+    {1.093e-03f, 0.000e+00f, 0.000e+00f},
+    {5.369e-03f, 0.000e+00f, 0.000e+00f},
+    {1.426e-02f, 0.000e+00f, 0.000e+00f}
 };
 
 static float sigma_c[NUM_GROUPS][NUM_REGIONS] = {
-    {1.41e-6f, 1.71e-2f, 3.34e-6f}, {1.34e-3f, 7.83e-3f, 3.34e-6f},
-    {1.10e-2f, 2.83e-4f, 2.56e-7f}, {3.29e-2f, 4.52e-6f, 6.63e-7f},
-    {8.23e-2f, 1.06e-5f, 2.24e-7f}, {4.28e-2f, 4.39e-6f, 1.27e-7f},
-    {9.90e-2f, 1.25e-5f, 2.02e-7f}, {2.51e-1f, 3.98e-5f, 6.02e-7f},
-    {2.12e+0f, 1.26e-4f, 1.84e-6f}, {4.30e+0f, 3.95e-4f, 5.76e-6f}
+    {1.678e-01f, 1.770e-02f, 8.331e-02f},
+    {7.488e-02f, 8.420e-03f, 3.942e-02f},
+    {2.147e-02f, 2.463e-03f, 1.147e-02f},
+    {1.200e-01f, 7.635e-04f, 3.548e-03f},
+    {7.411e-02f, 2.361e-04f, 1.119e-03f},
+    {2.861e-02f, 6.725e-05f, 3.517e-04f},
+    {1.511e-02f, 2.104e-04f, 1.070e-04f},
+    {4.756e-03f, 1.128e-04f, 3.086e-05f},
+    {2.048e-03f, 3.084e-05f, 1.332e-05f},
+    {1.990e-03f, 1.366e-03f, 1.324e-03f}
 };
 
 static float sigma_s[NUM_GROUPS][NUM_REGIONS] = {
-    {2.76e-1f, 1.44e-1f, 1.27e-2f}, {3.88e-1f, 1.76e-1f, 7.36e-2f},
-    {4.77e-1f, 3.44e-1f, 2.65e-1f}, {6.88e-1f, 2.66e-1f, 5.72e-1f},
-    {9.38e-1f, 2.06e-1f, 6.69e-1f}, {1.52e+0f, 2.14e-1f, 6.81e-1f},
-    {2.30e+0f, 2.23e-1f, 6.82e-1f}, {2.45e+0f, 2.31e-1f, 6.83e-1f},
-    {9.79e+0f, 2.40e-1f, 6.86e-1f}, {4.36e+1f, 2.41e-1f, 6.91e-1f}
+    {4.121e-01f, 8.862e-02f, 4.157e+00f},
+    {4.039e-01f, 8.649e-02f, 2.577e+00f},
+    {3.967e-01f, 8.593e-02f, 1.608e+00f},
+    {4.037e-01f, 8.583e-02f, 1.498e+00f},
+    {5.282e-01f, 8.540e-02f, 1.493e+00f},
+    {5.011e-01f, 8.195e-02f, 1.483e+00f},
+    {5.005e-01f, 6.418e-02f, 1.396e+00f},
+    {4.335e-01f, 3.173e-01f, 9.342e-01f},
+    {3.193e-01f, 2.063e-01f, 3.991e-01f},
+    {2.550e-01f, 1.371e-01f, 1.851e-01f}
 };
 
 // B-10 microscopic (n,α) XS in barns per group, 1/v from 3840 b at 0.025 eV.
@@ -223,14 +238,13 @@ static void transport_one(
             y += dmin * uy;
 
             if (periodic) {
-                // Periodic wrap: mirrors CUDA's  x = -x  /  y = -y.
-                if (paxis == 0) x = -x; else y = -y;
+                // Reflective square boundary used by the CUDA transport kernel.
+                if (paxis == 0) ux = -ux; else uy = -uy;
                 region = MODERATOR;
-                t.leakage++;        // matches CUDA tally name (cosmetic)
                 // direction is preserved — same as regionchange=1 in CUDA
             } else {
                 // Nudge past the surface to avoid re-detecting it.
-                constexpr float eps = 1e-5f;
+                constexpr float eps = 1e-4f;
                 x += eps * ux;
                 y += eps * uy;
                 region = next_region;
@@ -261,13 +275,12 @@ static void transport_one(
                 return;
 
             } else {
-                // Scatter: deterministic energy loss (matches transport.cu).
+                // Scatter: stochastic post-collision energy factor.
                 t.scatter++;
                 float A     = (region == FUEL) ? 238.02891f :
                               (region == CLAD) ?  26.981539f : 4.5f;
-                float ratio = (A - 1.0f) / (A + 1.0f);
-                float ksi   = 1.0f + std::log(ratio) * (A-1.0f)*(A-1.0f) / (2.0f*A);
-                energy *= std::exp(-ksi);
+                float alpha = std::pow((A - 1.0f) / (A + 1.0f), 2.0f);
+                energy *= alpha + (1.0f - alpha) * rng.uniform();
                 need_dir = true;    // regionchange=0: sample new direction
             }
         }
