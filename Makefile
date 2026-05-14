@@ -14,7 +14,8 @@ SOURCES = src/main.cu
 HEADERS = include/sim.cuh src/common.h src/transport.cu src/rng.cu src/fission_bank.cu
 
 # Output executable
-TARGET = transport_sim
+TARGET     = transport_sim
+CPU_TARGET = cpu_sim
 
 # Default target
 all: $(TARGET)
@@ -27,9 +28,15 @@ $(TARGET): $(SOURCES) $(HEADERS)
 run: $(TARGET)
 	srun -n 1 --gpus=1 ./$(TARGET) $(ARGS)
 
+# CPU-only simulation (no CUDA required)
+$(CPU_TARGET): src/cpu_sim.cpp
+	$(CXX) -std=c++17 -O3 -o $@ $<
+
+cpu: $(CPU_TARGET)
+
 # Clean
 clean:
-	rm -f $(TARGET) *.o
+	rm -f $(TARGET) $(CPU_TARGET) *.o
 
 # Verbose build (shows actual compilation commands)
 verbose:
