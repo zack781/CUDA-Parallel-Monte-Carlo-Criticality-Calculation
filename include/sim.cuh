@@ -24,47 +24,60 @@ __constant__ float d_GROUP_ENERGY[NUM_GROUPS] = {
     3.0e-4f, 3.0e-5f, 3.0e-6f, 3.0e-7f, 3.0e-8f
 };
 
-// sigma f by energy group and region
-__constant__ float d_sigma_f[NUM_GROUPS][NUM_REGIONS] = {
-    {5.218e-01f, 0.000e+00f, 0.000e+00f},
-    {2.264e-01f, 0.000e+00f, 0.000e+00f},
-    {4.439e-02f, 0.000e+00f, 0.000e+00f},
-    {2.694e-02f, 0.000e+00f, 0.000e+00f},
-    {2.107e-02f, 0.000e+00f, 0.000e+00f},
-    {6.647e-03f, 0.000e+00f, 0.000e+00f},
-    {2.226e-03f, 0.000e+00f, 0.000e+00f},
-    {1.093e-03f, 0.000e+00f, 0.000e+00f},
-    {5.369e-03f, 0.000e+00f, 0.000e+00f},
-    {1.426e-02f, 0.000e+00f, 0.000e+00f}
-};
+// All four cross-section values for one (group, region) pair are stored together
+// so a single 16-byte constant-memory load covers sig_f, sig_c, sig_s, and sig_t.
+__constant__ XS d_cross_sections[NUM_GROUPS][NUM_REGIONS];
 
-// sigma c by energy group and region
-__constant__ float d_sigma_c[NUM_GROUPS][NUM_REGIONS] = {
-    {1.678e-01f, 1.770e-02f, 8.331e-02f},
-    {7.488e-02f, 8.420e-03f, 3.942e-02f},
-    {2.147e-02f, 2.463e-03f, 1.147e-02f},
-    {1.200e-01f, 7.635e-04f, 3.548e-03f},
-    {7.411e-02f, 2.361e-04f, 1.119e-03f},
-    {2.861e-02f, 6.725e-05f, 3.517e-04f},
-    {1.511e-02f, 2.104e-04f, 1.070e-04f},
-    {4.756e-03f, 1.128e-04f, 3.086e-05f},
-    {2.048e-03f, 3.084e-05f, 1.332e-05f},
-    {1.990e-03f, 1.366e-03f, 1.324e-03f}
-};
+// Populate d_cross_sections from host data. Call once before any kernel launch.
+inline void init_cross_sections() {
+    static const float h_sigma_f[NUM_GROUPS][NUM_REGIONS] = {
+        {5.218e-01f, 0.000e+00f, 0.000e+00f},
+        {2.264e-01f, 0.000e+00f, 0.000e+00f},
+        {4.439e-02f, 0.000e+00f, 0.000e+00f},
+        {2.694e-02f, 0.000e+00f, 0.000e+00f},
+        {2.107e-02f, 0.000e+00f, 0.000e+00f},
+        {6.647e-03f, 0.000e+00f, 0.000e+00f},
+        {2.226e-03f, 0.000e+00f, 0.000e+00f},
+        {1.093e-03f, 0.000e+00f, 0.000e+00f},
+        {5.369e-03f, 0.000e+00f, 0.000e+00f},
+        {1.426e-02f, 0.000e+00f, 0.000e+00f}
+    };
+    static const float h_sigma_c[NUM_GROUPS][NUM_REGIONS] = {
+        {1.678e-01f, 1.770e-02f, 8.331e-02f},
+        {7.488e-02f, 8.420e-03f, 3.942e-02f},
+        {2.147e-02f, 2.463e-03f, 1.147e-02f},
+        {1.200e-01f, 7.635e-04f, 3.548e-03f},
+        {7.411e-02f, 2.361e-04f, 1.119e-03f},
+        {2.861e-02f, 6.725e-05f, 3.517e-04f},
+        {1.511e-02f, 2.104e-04f, 1.070e-04f},
+        {4.756e-03f, 1.128e-04f, 3.086e-05f},
+        {2.048e-03f, 3.084e-05f, 1.332e-05f},
+        {1.990e-03f, 1.366e-03f, 1.324e-03f}
+    };
+    static const float h_sigma_s[NUM_GROUPS][NUM_REGIONS] = {
+        {4.121e-01f, 8.862e-02f, 4.157e+00f},
+        {4.039e-01f, 8.649e-02f, 2.577e+00f},
+        {3.967e-01f, 8.593e-02f, 1.608e+00f},
+        {4.037e-01f, 8.583e-02f, 1.498e+00f},
+        {5.282e-01f, 8.540e-02f, 1.493e+00f},
+        {5.011e-01f, 8.195e-02f, 1.483e+00f},
+        {5.005e-01f, 6.418e-02f, 1.396e+00f},
+        {4.335e-01f, 3.173e-01f, 9.342e-01f},
+        {3.193e-01f, 2.063e-01f, 3.991e-01f},
+        {2.550e-01f, 1.371e-01f, 1.851e-01f}
+    };
 
-// sigma s by energy group and region
-__constant__ float d_sigma_s[NUM_GROUPS][NUM_REGIONS] = {
-    {4.121e-01f, 8.862e-02f, 4.157e+00f},
-    {4.039e-01f, 8.649e-02f, 2.577e+00f},
-    {3.967e-01f, 8.593e-02f, 1.608e+00f},
-    {4.037e-01f, 8.583e-02f, 1.498e+00f},
-    {5.282e-01f, 8.540e-02f, 1.493e+00f},
-    {5.011e-01f, 8.195e-02f, 1.483e+00f},
-    {5.005e-01f, 6.418e-02f, 1.396e+00f},
-    {4.335e-01f, 3.173e-01f, 9.342e-01f},
-    {3.193e-01f, 2.063e-01f, 3.991e-01f},
-    {2.550e-01f, 1.371e-01f, 1.851e-01f}
-};
+    XS h_xs[NUM_GROUPS][NUM_REGIONS];
+    for (int g = 0; g < NUM_GROUPS; ++g) {
+        for (int r = 0; r < NUM_REGIONS; ++r) {
+            h_xs[g][r].sig_f = h_sigma_f[g][r];
+            h_xs[g][r].sig_c = h_sigma_c[g][r];
+            h_xs[g][r].sig_s = h_sigma_s[g][r];
+            h_xs[g][r].sig_t = h_sigma_f[g][r] + h_sigma_c[g][r] + h_sigma_s[g][r];
+        }
+    }
+    cudaMemcpyToSymbol(d_cross_sections, h_xs, sizeof(h_xs));
+}
 
 
 
@@ -116,27 +129,6 @@ __constant__ float d_sigma_s[NUM_GROUPS][NUM_REGIONS] = {
 //     {4.36e+1f, 2.41e-1f, 6.91e-1f}
 // };
 
-__device__ __forceinline__
-XS CrossSections(float Energy, int region)
-{
-    int group = 9;
-
-    #pragma unroll
-    for (int g = 0; g < NUM_GROUPS; g++) {
-        if (Energy >= d_GROUP_ENERGY[g]) {
-            group = g;
-            break;
-        }
-    }
-
-    XS xs;
-    xs.sig_f = d_sigma_f[group][region];
-    xs.sig_c = d_sigma_c[group][region];
-    xs.sig_s = d_sigma_s[group][region];
-    xs.sig_t = xs.sig_f + xs.sig_c + xs.sig_s;
-
-    return xs;
-}
 
 struct Geometry {
     float r_fuel;     // Fuel pellet radius.
@@ -182,15 +174,15 @@ enum ReactionType {
     REACTION_NONE = 3
 };
 
-struct Neutron {
-    float x;
-    float y;
-    float Energy;
-    float ux;
-    float uy;
-    int region;
-    int regionchange;
-    curandState rng_state;
+struct NeutronSoA {
+    float *x;
+    float *y;
+    float *Energy;
+    float *ux;
+    float *uy;
+    int *region;
+    int *regionchange;
+    curandState *rng_state;
 };
 
 // reaction cross sections for one energy group and region
@@ -260,7 +252,7 @@ __global__ void init_rng(curandState *states, unsigned long seed, int n = -1);
 
 __global__ void initialize_neutrons(
     curandState *states,
-    Neutron *neutrons,
+    NeutronSoA neutrons,
     float r_fuel,
     int n
 );
@@ -274,11 +266,11 @@ __device__ float sample_initial_energy(curandState *state);
 __device__ int sample_fission_multiplicity(curandState *state);
 
 __global__ void move_kernel(
-    const Neutron *move_queue,
+    NeutronSoA move_queue,
     int *move_count,
-    Neutron *next_move_queue,
+    NeutronSoA next_move_queue,
     int *next_move_count,
-    Neutron *collision_queue,
+    NeutronSoA collision_queue,
     int *collision_count,
     Tallies *global_tallies,
     RegionCorrectionTallies *region_correction,
@@ -287,11 +279,11 @@ __global__ void move_kernel(
 );
 
 __global__ void collision_kernel(
-    const Neutron *collision_queue,
+    NeutronSoA collision_queue,
     const int *collision_count,
-    Neutron *next_move_queue,
+    NeutronSoA next_move_queue,
     int *next_move_count,
-    Neutron *fission_bank,
+    NeutronSoA fission_bank,
     int fission_bank_capacity,
     int *fission_bank_count,
     HistoryTallies *history_tallies,
@@ -301,11 +293,20 @@ __global__ void collision_kernel(
 );
 
 __global__ void compact_queue_kernel(
-    const Neutron *input_queue,
+    NeutronSoA input_queue,
     const int *keep_flags,
     const int *output_offsets,
     int input_count,
-    Neutron *output_queue
+    NeutronSoA output_queue
+);
+
+// Reorder all SoA fields from src into dst using a permutation index array.
+// dst[i] = src[indices[i]] for i in [0, count).
+__global__ void gather_kernel(
+    NeutronSoA src,
+    const int *indices,
+    int count,
+    NeutronSoA dst
 );
 
 __global__ void reset_counts_kernel(
@@ -314,7 +315,7 @@ __global__ void reset_counts_kernel(
 );
 
 __global__ void tail_correction_kernel(
-    const Neutron *tail_queue,
+    NeutronSoA tail_queue,
     const int *tail_count,
     RegionCorrectionTallies *region_correction
 );
@@ -324,9 +325,9 @@ __global__ void normalize_bank_kernel();
 __global__ void entropy_tally_kernel();
 
 __global__ void resample_kernel(
-    const Neutron *fission_bank,
+    NeutronSoA fission_bank,
     int fission_bank_count,
-    Neutron *source_particles,
+    NeutronSoA source_particles,
     int source_count,
     curandState *rng_states
 );
