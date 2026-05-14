@@ -287,7 +287,7 @@ __global__ void collision_kernel(NeutronSoA collision_queue,
 
   XS cross_section = get_cross_sections(Energy, region);
   if (cross_section.sig_t <= 0.0f) {
-    add_completed_region(region_correction, neutron.region);
+    add_completed_region(region_correction, region);
     history_tallies[i] = local_tallies;
     return;
   }
@@ -302,8 +302,8 @@ __global__ void collision_kernel(NeutronSoA collision_queue,
 
     int fission_neutrons = sample_fission_multiplicity(&local_state);
     local_tallies.neutrons_produced = fission_neutrons;
-    add_completed_region(region_correction, neutron.region);
-    add_produced_region(region_correction, neutron.region,
+    add_completed_region(region_correction, region);
+    add_produced_region(region_correction, region,
                         static_cast<unsigned long long>(fission_neutrons));
 
     unsigned int active_fission_mask = __activemask();
@@ -361,7 +361,7 @@ __global__ void collision_kernel(NeutronSoA collision_queue,
   // Capture: no particles added.
   else if (reaction_sample <= fission_probability + capture_probability) {
     local_tallies.capture = 1;
-    add_completed_region(region_correction, neutron.region);
+    add_completed_region(region_correction, region);
   }
 
   // Scatter: every active lane adds one neutron.
