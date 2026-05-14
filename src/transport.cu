@@ -90,6 +90,10 @@ __global__ void move_kernel(
     int *collision_count,
     Tallies *global_tallies,
     // HistoryTallies *history_tallies,
+#if PROFILE_HISTORY_LENGTHS
+    unsigned int *history_move_counts,
+    int history_count,
+#endif
     int queue_capacity,
     float r_fuel
 ) {
@@ -97,6 +101,12 @@ __global__ void move_kernel(
     if (i >= *move_count) return;
 
     Neutron neutron = move_queue[i];
+
+#if PROFILE_HISTORY_LENGTHS
+    if (neutron.history_id >= 0 && neutron.history_id < history_count) {
+        atomicAdd(&history_move_counts[neutron.history_id], 1U);
+    }
+#endif
 
     float E = neutron.Energy;
     int region = neutron.region;

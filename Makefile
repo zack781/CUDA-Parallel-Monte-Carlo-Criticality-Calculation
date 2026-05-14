@@ -8,6 +8,16 @@ CUDA_ARCH = -gencode arch=compute_80,code=sm_80
 # Compilation flags
 CFLAGS = -std=c++17 -O3
 NVCC_FLAGS = $(CUDA_ARCH) $(CFLAGS) -I. -I./include
+PROFILE_HISTORY_LENGTHS ?= 0
+PROFILE_ACTIVE_COUNTS ?= 0
+
+ifeq ($(PROFILE_HISTORY_LENGTHS),1)
+NVCC_FLAGS += -DPROFILE_HISTORY_LENGTHS=1
+endif
+
+ifeq ($(PROFILE_ACTIVE_COUNTS),1)
+NVCC_FLAGS += -DPROFILE_ACTIVE_COUNTS=1
+endif
 
 # Source files
 SOURCES = src/main.cu

@@ -8,6 +8,14 @@
 #define DEBUG_TRANSPORT 0
 #endif
 
+#ifndef PROFILE_HISTORY_LENGTHS
+#define PROFILE_HISTORY_LENGTHS 0
+#endif
+
+#ifndef PROFILE_ACTIVE_COUNTS
+#define PROFILE_ACTIVE_COUNTS 0
+#endif
+
 constexpr int NUM_GROUPS = 10;
 constexpr int NUM_REGIONS = 3;
 
@@ -140,6 +148,9 @@ struct Neutron {
     float uy;
     int region;
     int regionchange;
+#if PROFILE_HISTORY_LENGTHS
+    int history_id;
+#endif
     curandState rng_state;
 };
 
@@ -225,6 +236,10 @@ __global__ void move_kernel(
     Neutron *collision_queue,
     int *collision_count,
     Tallies *global_tallies,
+#if PROFILE_HISTORY_LENGTHS
+    unsigned int *history_move_counts,
+    int history_count,
+#endif
     int queue_capacity,
     float r_fuel
 );
@@ -260,6 +275,10 @@ __global__ void resample_kernel(
     Neutron *source_particles,
     int source_count,
     curandState *rng_states
+#if PROFILE_HISTORY_LENGTHS
+    ,
+    int history_base
+#endif
 );
 
 __global__ void initialize_source_kernel();

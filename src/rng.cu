@@ -51,6 +51,9 @@ void initialize_neutrons(
     // Initial source is inside fuel
     neutrons[tid].region = FUEL;
     neutrons[tid].regionchange = 0;
+#if PROFILE_HISTORY_LENGTHS
+    neutrons[tid].history_id = tid;
+#endif
     neutrons[tid].rng_state = local_state;
 
     states[tid] = local_state;

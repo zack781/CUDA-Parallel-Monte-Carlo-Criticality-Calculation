@@ -5,13 +5,21 @@
 #include "transport.cu"
 #include "rng.cu"
 #include "fission_bank.cu"
+#include <cstdio>
 #include <cstdlib>
+#include <vector>
 
 #define DEFAULT_NEUTRONS 10000
 #define DEFAULT_GENERATIONS 10
 #define DEFAULT_BATCH_SIZE 10
 #define QUEUE_MULTIPLIER 10
 #define FUEL_RADIUS 0.53
+
+struct ActiveCountSample {
+    int generation;
+    int iteration;
+    int move_count;
+};
 
 // move_queue: contains neutrons that need to be moved to their next event
 // next_move_queue: contains neutrons that hit a geometric boundary and need transport in the next iteration
@@ -21,6 +29,17 @@ int main(int argc, char **argv) {
     int N = argc > 1 ? std::atoi(argv[1]) : DEFAULT_NEUTRONS;
     int num_generations = argc > 2 ? std::atoi(argv[2]) : DEFAULT_GENERATIONS;
     int batch_size = argc > 3 ? std::atoi(argv[3]) : DEFAULT_BATCH_SIZE;
+#if PROFILE_HISTORY_LENGTHS || PROFILE_ACTIVE_COUNTS
+    int next_profile_arg = 4;
+#endif
+#if PROFILE_HISTORY_LENGTHS
+    const char *history_counts_path =
+        argc > next_profile_arg ? argv[next_profile_arg++] : "history_move_counts.csv";
+#endif
+#if PROFILE_ACTIVE_COUNTS
+    const char *active_counts_path =
+        argc > next_profile_arg ? argv[next_profile_arg++] : "active_counts.csv";
+#endif
 
     if (N <= 0 || num_generations <= 0 || batch_size <= 0) {
         printf("Usage: %s [neutrons] [generations] [batch_size]\n", argv[0]);
@@ -64,6 +83,13 @@ int main(int argc, char **argv) {
     CUDA_CHECK(cudaMalloc(&d_global_tallies, sizeof(Tallies)));
     CUDA_CHECK(cudaMemset(d_global_tallies, 0, sizeof(Tallies)));
 
+#if PROFILE_HISTORY_LENGTHS
+    unsigned int *d_history_move_counts = nullptr;
+    int total_history_count = N * num_generations;
+    CUDA_CHECK(cudaMalloc(&d_history_move_counts, total_history_count * sizeof(unsigned int)));
+    CUDA_CHECK(cudaMemset(d_history_move_counts, 0, total_history_count * sizeof(unsigned int)));
+#endif
+
     int *d_move_count, *d_next_move_count, *d_collision_count;
     CUDA_CHECK(cudaMalloc(&d_move_count, sizeof(int)));
     CUDA_CHECK(cudaMalloc(&d_next_move_count, sizeof(int)));
@@ -88,12 +114,26 @@ int main(int argc, char **argv) {
 
     int completed_generations = 0;
     const int max_iterations = 100000;
+#if PROFILE_ACTIVE_COUNTS
+    std::vector<ActiveCountSample> active_count_samples;
+    active_count_samples.reserve(num_generations * 512);
+#endif
+    cudaEvent_t gpu_start;
+    cudaEvent_t gpu_stop;
+    CUDA_CHECK(cudaEventCreate(&gpu_start));
+    CUDA_CHECK(cudaEventCreate(&gpu_stop));
+    CUDA_CHECK(cudaEventRecord(gpu_start));
+
     for (int generation = 0; generation < num_generations; ++generation) {
         int zero = 0;
         CUDA_CHECK(cudaMemcpy(d_fission_bank_count, &zero, sizeof(int), cudaMemcpyHostToDevice));
 
         int iter = 0;
+#if PROFILE_ACTIVE_COUNTS
+        active_count_samples.push_back({generation, iter, move_count});
+#endif
         while (move_count > 0) {
+            int active_blocks = (move_count + threads - 1) / threads;
 #if DEBUG_TRANSPORT
             if (iter % 100 == 0) {
                 printf("generation = %d, iter = %d, move_count = %d\n", generation, iter, move_count);
@@ -107,17 +147,21 @@ int main(int argc, char **argv) {
             for (int step = 0; step < batch_size && iter < max_iterations; ++step, ++iter) {
                 CUDA_CHECK(cudaMemcpy(d_next_move_count, &zero, sizeof(int), cudaMemcpyHostToDevice));
                 CUDA_CHECK(cudaMemcpy(d_collision_count, &zero, sizeof(int), cudaMemcpyHostToDevice));
-                move_kernel<<<capacity_blocks, threads>>>(
+                move_kernel<<<active_blocks, threads>>>(
                     d_move_queue, d_move_count,
                     d_next_move_queue, d_next_move_count,
                     d_collision_queue, d_collision_count,
                     d_global_tallies,
+#if PROFILE_HISTORY_LENGTHS
+                    d_history_move_counts,
+                    total_history_count,
+#endif
                     queue_capacity,
                     r_fuel
                 );
                 CUDA_CHECK(cudaGetLastError());
 
-                collision_kernel<<<capacity_blocks, threads>>>(
+                collision_kernel<<<active_blocks, threads>>>(
                     d_collision_queue, d_collision_count,
                     d_next_move_queue, d_next_move_count,
                     d_fission_bank, fission_bank_capacity,
@@ -138,6 +182,9 @@ int main(int argc, char **argv) {
             }
 
             CUDA_CHECK(cudaMemcpy(&move_count, d_move_count, sizeof(int), cudaMemcpyDeviceToHost));
+#if PROFILE_ACTIVE_COUNTS
+            active_count_samples.push_back({generation, iter, move_count});
+#endif
             CUDA_CHECK(cudaMemcpy(d_collision_count, &zero, sizeof(int), cudaMemcpyHostToDevice));
         }
 
@@ -157,6 +204,10 @@ int main(int argc, char **argv) {
             d_move_queue,
             N,
             d_rng_states
+#if PROFILE_HISTORY_LENGTHS
+            ,
+            (generation + 1) * N
+#endif
         );
         CUDA_CHECK(cudaGetLastError());
         CUDA_CHECK(cudaDeviceSynchronize());
@@ -166,6 +217,11 @@ int main(int argc, char **argv) {
         CUDA_CHECK(cudaMemcpy(d_next_move_count, &zero, sizeof(int), cudaMemcpyHostToDevice));
         CUDA_CHECK(cudaMemcpy(d_collision_count, &zero, sizeof(int), cudaMemcpyHostToDevice));
     }
+
+    CUDA_CHECK(cudaEventRecord(gpu_stop));
+    CUDA_CHECK(cudaEventSynchronize(gpu_stop));
+    float gpu_elapsed_ms = 0.0f;
+    CUDA_CHECK(cudaEventElapsedTime(&gpu_elapsed_ms, gpu_start, gpu_stop));
 
     Tallies global_tallies = {};
     CUDA_CHECK(cudaMemcpy(&global_tallies, d_global_tallies, sizeof(Tallies), cudaMemcpyDeviceToHost));
@@ -193,6 +249,47 @@ int main(int argc, char **argv) {
     printf("Queue Overflowed Particles...............=  %llu\n", global_tallies.queue_overflow);
     printf("Fission Bank Overflowed Particles........=  %llu\n", global_tallies.fission_bank_overflow);
     printf("Lost With No Surface.....................=  %llu\n", global_tallies.lost_no_surface);
+    printf("GPU Timed Section Seconds................=  %.6f\n", gpu_elapsed_ms / 1000.0f);
+#if PROFILE_ACTIVE_COUNTS
+    FILE *active_file = std::fopen(active_counts_path, "w");
+    if (active_file == nullptr) {
+        std::perror("failed to open active count CSV");
+    } else {
+        std::fprintf(active_file, "generation,iteration,move_count,active_fraction\n");
+        for (const ActiveCountSample &sample : active_count_samples) {
+            std::fprintf(active_file, "%d,%d,%d,%.9f\n",
+                         sample.generation,
+                         sample.iteration,
+                         sample.move_count,
+                         static_cast<double>(sample.move_count) / static_cast<double>(N));
+        }
+        std::fclose(active_file);
+        printf("Active Count CSV.........................=  %s\n", active_counts_path);
+    }
+#endif
+#if PROFILE_HISTORY_LENGTHS
+    int written_history_count = completed_generations * N;
+    std::vector<unsigned int> history_move_counts(written_history_count);
+    CUDA_CHECK(cudaMemcpy(history_move_counts.data(), d_history_move_counts,
+                          written_history_count * sizeof(unsigned int),
+                          cudaMemcpyDeviceToHost));
+
+    FILE *history_file = std::fopen(history_counts_path, "w");
+    if (history_file == nullptr) {
+        std::perror("failed to open history move count CSV");
+    } else {
+        std::fprintf(history_file, "history_id,generation,source_index,move_kernel_calls\n");
+        for (int history_id = 0; history_id < written_history_count; ++history_id) {
+            std::fprintf(history_file, "%d,%d,%d,%u\n",
+                         history_id,
+                         history_id / N,
+                         history_id % N,
+                         history_move_counts[history_id]);
+        }
+        std::fclose(history_file);
+        printf("History Move Count CSV...................=  %s\n", history_counts_path);
+    }
+#endif
 #if DEBUG_TRANSPORT
     printf("  Lost No Surface Fuel...................=  %llu\n", global_tallies.lost_no_surface_fuel);
     printf("  Lost No Surface Clad...................=  %llu\n", global_tallies.lost_no_surface_clad);
@@ -205,6 +302,9 @@ int main(int argc, char **argv) {
 #endif
 
     CUDA_CHECK(cudaFree(d_fission_bank_count));
+#if PROFILE_HISTORY_LENGTHS
+    CUDA_CHECK(cudaFree(d_history_move_counts));
+#endif
     CUDA_CHECK(cudaFree(d_global_tallies));
     CUDA_CHECK(cudaFree(d_fission_bank));
     CUDA_CHECK(cudaFree(d_history_tallies));
@@ -213,6 +313,8 @@ int main(int argc, char **argv) {
     CUDA_CHECK(cudaFree(d_move_queue));
     CUDA_CHECK(cudaFree(d_rng_states));
     CUDA_CHECK(cudaFree(d_source_particles));
+    CUDA_CHECK(cudaEventDestroy(gpu_stop));
+    CUDA_CHECK(cudaEventDestroy(gpu_start));
 
     printf("simulation ended!\n");
     return 0;

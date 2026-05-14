@@ -6,6 +6,10 @@ __global__ void resample_kernel(
     Neutron *source_particles,
     int source_count,
     curandState *rng_states
+#if PROFILE_HISTORY_LENGTHS
+    ,
+    int history_base
+#endif
 ) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= source_count || fission_bank_count <= 0) {
@@ -24,6 +28,9 @@ __global__ void resample_kernel(
     neutron.uy = 0.0f;
     neutron.region = FUEL;
     neutron.regionchange = 0;
+#if PROFILE_HISTORY_LENGTHS
+    neutron.history_id = history_base + idx;
+#endif
     neutron.rng_state = local_state;
 
     source_particles[idx] = neutron;
