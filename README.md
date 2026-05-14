@@ -14,16 +14,12 @@ CUDA-Parallel-Monte-Carlo-Criticality-Calculation/
     └── keff_history.csv
 ```
 
-## Tail cutoff correction
+## Hybrid CPU/GPU tail handling
 
-The transport executable accepts optional tail-truncation arguments:
+The transport executable accepts optional run-size arguments:
 
 ```bash
-./transport_sim [neutrons] [generations] [tail_fraction]
+./transport_sim [neutrons] [generations]
 ```
 
-`tail_fraction` stops a generation once the active movement queue falls below that fraction of the original source population. For example, `0.001` truncates when fewer than `0.1%` of the source particles remain active.
-
-Tail yield is estimated dynamically from the current generation. Completed particles accumulate observed fission-bank production by terminal region, remaining tail particles are counted by their current region, and the corrected `k_eff` adds the region-weighted expected tail fissions. If a region has no completed particles in the current generation, it falls back to the generation-wide observed yield.
-
-The correction adjusts the scalar reported `k_eff`, but the next-generation source is still resampled only from the explicit fission bank.
+The GPU advances particles with event queues while the queue is large. When the active movement queue falls below a fixed CPU switch threshold, the remaining histories are copied to the host and completed with the scalar CPU history algorithm. CPU-produced fission sites are appended back to the fission bank before computing `k_eff` and resampling the next generation.

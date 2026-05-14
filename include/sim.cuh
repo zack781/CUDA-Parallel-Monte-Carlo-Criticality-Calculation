@@ -242,12 +242,6 @@ struct HistoryTallies {
     unsigned int clad_surface[NUM_GROUPS];
 };
 
-struct RegionCorrectionTallies {
-    unsigned long long completed[NUM_REGIONS];
-    unsigned long long produced[NUM_REGIONS];
-    unsigned int tail[NUM_REGIONS];
-};
-
 __global__ void init_rng(curandState *states, unsigned long seed, int n = -1);
 
 __global__ void initialize_neutrons(
@@ -273,7 +267,6 @@ __global__ void move_kernel(
     NeutronSoA collision_queue,
     int *collision_count,
     Tallies *global_tallies,
-    RegionCorrectionTallies *region_correction,
     int queue_capacity,
     float r_fuel
 );
@@ -288,7 +281,6 @@ __global__ void collision_kernel(
     int *fission_bank_count,
     HistoryTallies *history_tallies,
     Tallies *global_tallies,
-    RegionCorrectionTallies *region_correction,
     int queue_capacity
 );
 
@@ -312,12 +304,6 @@ __global__ void gather_kernel(
 __global__ void reset_counts_kernel(
     int *first_count,
     int *second_count
-);
-
-__global__ void tail_correction_kernel(
-    NeutronSoA tail_queue,
-    const int *tail_count,
-    RegionCorrectionTallies *region_correction
 );
 
 __global__ void normalize_bank_kernel();

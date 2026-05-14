@@ -7,6 +7,11 @@
 #include "fission_bank.cu"
 #include <cstdlib>
 #include <cstdio>
+#include <cfloat>
+#include <cmath>
+#include <cstdint>
+#include <random>
+#include <vector>
 #include <thrust/sort.h>
 #include <thrust/sequence.h>
 #include <thrust/copy.h>
@@ -18,31 +23,317 @@
 #define QUEUE_MULTIPLIER 10
 #define FUEL_RADIUS 0.53
 #define SORT_INTERVAL 5
+#define CPU_SWITCH_THRESHOLD 4096
 
 // move_queue: contains neutrons that need to be moved to their next event
 // next_move_queue: contains neutrons that hit a geometric boundary and need transport in the next iteration
 // collision_queue: contains neutrons that reached their collision site
 
+namespace {
+
+constexpr float CPU_PI = 3.14159265358979323846f;
+
+struct CpuRng {
+    std::mt19937 eng;
+    std::uniform_real_distribution<float> uniform_dist{0.0f, 1.0f};
+
+    explicit CpuRng(uint64_t seed) : eng(seed) {}
+
+    float uniform() {
+        return uniform_dist(eng);
+    }
+
+    void isotropic_dir(float &ux, float &uy) {
+        float theta = 2.0f * CPU_PI * uniform();
+        ux = std::cos(theta);
+        uy = std::sin(theta);
+    }
+
+    int fission_nu() {
+        return uniform() < 0.5f ? 2 : 3;
+    }
+};
+
+struct CpuFissionSite {
+    float x;
+    float y;
+};
+
+struct CpuParticle {
+    float x;
+    float y;
+    float Energy;
+    float ux;
+    float uy;
+    int region;
+    int regionchange;
+};
+
+int host_energy_group(float energy) {
+    static const float group_energy[NUM_GROUPS] = {
+        3.0e+1f, 3.0e+0f, 3.0e-1f, 3.0e-2f, 3.0e-3f,
+        3.0e-4f, 3.0e-5f, 3.0e-6f, 3.0e-7f, 3.0e-8f
+    };
+
+    int group = 0;
+    for (int threshold = 0; threshold < NUM_GROUPS - 1; ++threshold) {
+        group += energy < group_energy[threshold];
+    }
+    return group;
+}
+
+XS host_cross_sections(float energy, int region) {
+    static const float sigma_f[NUM_GROUPS][NUM_REGIONS] = {
+        {5.218e-01f, 0.000e+00f, 0.000e+00f},
+        {2.264e-01f, 0.000e+00f, 0.000e+00f},
+        {4.439e-02f, 0.000e+00f, 0.000e+00f},
+        {2.694e-02f, 0.000e+00f, 0.000e+00f},
+        {2.107e-02f, 0.000e+00f, 0.000e+00f},
+        {6.647e-03f, 0.000e+00f, 0.000e+00f},
+        {2.226e-03f, 0.000e+00f, 0.000e+00f},
+        {1.093e-03f, 0.000e+00f, 0.000e+00f},
+        {5.369e-03f, 0.000e+00f, 0.000e+00f},
+        {1.426e-02f, 0.000e+00f, 0.000e+00f}
+    };
+    static const float sigma_c[NUM_GROUPS][NUM_REGIONS] = {
+        {1.678e-01f, 1.770e-02f, 8.331e-02f},
+        {7.488e-02f, 8.420e-03f, 3.942e-02f},
+        {2.147e-02f, 2.463e-03f, 1.147e-02f},
+        {1.200e-01f, 7.635e-04f, 3.548e-03f},
+        {7.411e-02f, 2.361e-04f, 1.119e-03f},
+        {2.861e-02f, 6.725e-05f, 3.517e-04f},
+        {1.511e-02f, 2.104e-04f, 1.070e-04f},
+        {4.756e-03f, 1.128e-04f, 3.086e-05f},
+        {2.048e-03f, 3.084e-05f, 1.332e-05f},
+        {1.990e-03f, 1.366e-03f, 1.324e-03f}
+    };
+    static const float sigma_s[NUM_GROUPS][NUM_REGIONS] = {
+        {4.121e-01f, 8.862e-02f, 4.157e+00f},
+        {4.039e-01f, 8.649e-02f, 2.577e+00f},
+        {3.967e-01f, 8.593e-02f, 1.608e+00f},
+        {4.037e-01f, 8.583e-02f, 1.498e+00f},
+        {5.282e-01f, 8.540e-02f, 1.493e+00f},
+        {5.011e-01f, 8.195e-02f, 1.483e+00f},
+        {5.005e-01f, 6.418e-02f, 1.396e+00f},
+        {4.335e-01f, 3.173e-01f, 9.342e-01f},
+        {3.193e-01f, 2.063e-01f, 3.991e-01f},
+        {2.550e-01f, 1.371e-01f, 1.851e-01f}
+    };
+
+    int group = host_energy_group(energy);
+    int material = (region >= 0 && region < NUM_REGIONS) ? region : MODERATOR;
+    XS xs;
+    xs.sig_f = sigma_f[group][material];
+    xs.sig_c = sigma_c[group][material];
+    xs.sig_s = sigma_s[group][material];
+    xs.sig_t = xs.sig_f + xs.sig_c + xs.sig_s;
+    return xs;
+}
+
+float cpu_circle_distance(float x, float y, float ux, float uy, float radius) {
+    float b = 2.0f * (x * ux + y * uy);
+    float c = x * x + y * y - radius * radius;
+    float delta = b * b - 4.0f * c;
+    if (delta < 0.0f) {
+        return FLT_MAX;
+    }
+
+    float sqrt_delta = std::sqrt(delta);
+    const float eps = 1.0e-9f;
+    float first = (-b - sqrt_delta) * 0.5f;
+    if (first > eps) {
+        return first;
+    }
+    float second = (-b + sqrt_delta) * 0.5f;
+    return second > eps ? second : FLT_MAX;
+}
+
+float cpu_flat_distance(float position, float direction, float wall) {
+    if (std::fabs(direction) < 1.0e-15f) {
+        return FLT_MAX;
+    }
+    float distance = (wall - position) / direction;
+    return distance > 1.0e-9f ? distance : FLT_MAX;
+}
+
+void cpu_transport_one(CpuParticle particle,
+                       CpuRng &rng,
+                       std::vector<CpuFissionSite> &fission_sites,
+                       Tallies &tallies) {
+    bool need_dir = particle.regionchange == 0;
+
+    while (true) {
+        if (need_dir) {
+            rng.isotropic_dir(particle.ux, particle.uy);
+            need_dir = false;
+        }
+
+        XS xs = host_cross_sections(particle.Energy, particle.region);
+        if (xs.sig_t <= 0.0f) {
+            ++tallies.lost_no_surface;
+            return;
+        }
+
+        float distance_to_collision = -std::log(rng.uniform()) / xs.sig_t;
+        float distance_to_boundary = FLT_MAX;
+        int next_region = particle.region;
+        bool square_boundary = false;
+        int square_axis = 0;
+
+        if (particle.region == FUEL) {
+            float distance = cpu_circle_distance(
+                particle.x, particle.y, particle.ux, particle.uy, FUEL_RADIUS);
+            if (distance < distance_to_boundary) {
+                distance_to_boundary = distance;
+                next_region = CLAD;
+            }
+        } else if (particle.region == CLAD) {
+            float fuel_distance = cpu_circle_distance(
+                particle.x, particle.y, particle.ux, particle.uy, FUEL_RADIUS);
+            float clad_distance = cpu_circle_distance(
+                particle.x, particle.y, particle.ux, particle.uy, DEFAULT_GEOMETRY.r_clad_out);
+            if (fuel_distance <= clad_distance) {
+                distance_to_boundary = fuel_distance;
+                next_region = FUEL;
+            } else {
+                distance_to_boundary = clad_distance;
+                next_region = MODERATOR;
+            }
+        } else {
+            float clad_distance = cpu_circle_distance(
+                particle.x, particle.y, particle.ux, particle.uy, DEFAULT_GEOMETRY.r_clad_out);
+            if (clad_distance < distance_to_boundary) {
+                distance_to_boundary = clad_distance;
+                next_region = CLAD;
+            }
+
+            float half_pitch = 0.5f * DEFAULT_GEOMETRY.pitch;
+            auto try_wall = [&](float position, float direction, float wall, int axis) {
+                float distance = cpu_flat_distance(position, direction, wall);
+                if (distance < distance_to_boundary) {
+                    distance_to_boundary = distance;
+                    square_boundary = true;
+                    square_axis = axis;
+                }
+            };
+            if (particle.ux > 0.0f) try_wall(particle.x, particle.ux, half_pitch, 0);
+            if (particle.ux < 0.0f) try_wall(particle.x, particle.ux, -half_pitch, 0);
+            if (particle.uy > 0.0f) try_wall(particle.y, particle.uy, half_pitch, 1);
+            if (particle.uy < 0.0f) try_wall(particle.y, particle.uy, -half_pitch, 1);
+        }
+
+        if (distance_to_boundary == FLT_MAX) {
+            ++tallies.lost_no_surface;
+            return;
+        }
+
+        if (distance_to_collision >= distance_to_boundary) {
+            particle.x += distance_to_boundary * particle.ux;
+            particle.y += distance_to_boundary * particle.uy;
+
+            if (square_boundary) {
+                if (square_axis == 0) {
+                    particle.ux = -particle.ux;
+                } else {
+                    particle.uy = -particle.uy;
+                }
+                particle.region = MODERATOR;
+            } else {
+                const float boundary_eps = 1.0e-4f;
+                particle.x += boundary_eps * particle.ux;
+                particle.y += boundary_eps * particle.uy;
+                particle.region = next_region;
+            }
+        } else {
+            particle.x += distance_to_collision * particle.ux;
+            particle.y += distance_to_collision * particle.uy;
+
+            float reaction_sample = rng.uniform();
+            float fission_probability = xs.sig_f / xs.sig_t;
+            float capture_probability = xs.sig_c / xs.sig_t;
+
+            if (reaction_sample <= fission_probability) {
+                ++tallies.fission;
+                int fission_neutrons = rng.fission_nu();
+                tallies.neutrons_produced += static_cast<unsigned long long>(fission_neutrons);
+                for (int child = 0; child < fission_neutrons; ++child) {
+                    fission_sites.push_back({particle.x, particle.y});
+                }
+                return;
+            }
+
+            if (reaction_sample <= fission_probability + capture_probability) {
+                ++tallies.capture;
+                return;
+            }
+
+            ++tallies.scattering;
+            float mass_number = 4.5f;
+            if (particle.region == FUEL) {
+                mass_number = 238.02891f;
+            } else if (particle.region == CLAD) {
+                mass_number = 26.981539f;
+            }
+            float alpha = std::pow((mass_number - 1.0f) / (mass_number + 1.0f), 2.0f);
+            particle.Energy *= alpha + (1.0f - alpha) * rng.uniform();
+            need_dir = true;
+        }
+    }
+}
+
+void copy_cpu_sites_to_fission_bank(const std::vector<CpuFissionSite> &sites,
+                                    NeutronSoA d_fission_bank,
+                                    int fission_bank_capacity,
+                                    int *d_fission_bank_count,
+                                    int &fission_bank_count,
+                                    Tallies &global_tallies) {
+    if (sites.empty()) {
+        return;
+    }
+
+    int available = fission_bank_capacity - fission_bank_count;
+    int copied = static_cast<int>(sites.size()) < available
+        ? static_cast<int>(sites.size())
+        : available;
+
+    if (copied > 0) {
+        std::vector<float> x(copied);
+        std::vector<float> y(copied);
+        for (int i = 0; i < copied; ++i) {
+            x[i] = sites[i].x;
+            y[i] = sites[i].y;
+        }
+        CUDA_CHECK(cudaMemcpy(d_fission_bank.x + fission_bank_count, x.data(),
+                              copied * sizeof(float), cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMemcpy(d_fission_bank.y + fission_bank_count, y.data(),
+                              copied * sizeof(float), cudaMemcpyHostToDevice));
+        fission_bank_count += copied;
+        CUDA_CHECK(cudaMemcpy(d_fission_bank_count, &fission_bank_count,
+                              sizeof(int), cudaMemcpyHostToDevice));
+    }
+
+    if (copied < static_cast<int>(sites.size())) {
+        global_tallies.fission_bank_overflow +=
+            static_cast<unsigned long long>(sites.size() - copied);
+    }
+}
+
+} // namespace
+
 int main(int argc, char **argv) {
     int N = argc > 1 ? std::atoi(argv[1]) : DEFAULT_NEUTRONS;
     int num_generations = argc > 2 ? std::atoi(argv[2]) : DEFAULT_GENERATIONS;
-    float tail_fraction = argc > 3 ? std::atof(argv[3]) : 0.0f;
 
-    if (N <= 0 || num_generations <= 0 ||
-        tail_fraction < 0.0f || tail_fraction >= 1.0f || argc > 4) {
-        printf("Usage: %s [neutrons] [generations] [tail_fraction]\n", argv[0]);
+    if (N <= 0 || num_generations <= 0 || argc > 3) {
+        printf("Usage: %s [neutrons] [generations]\n", argv[0]);
         return 1;
     }
 
     float r_fuel = FUEL_RADIUS;
     int queue_capacity = N * QUEUE_MULTIPLIER;
-    int tail_cutoff = static_cast<int>(tail_fraction * N);
-    if (tail_fraction > 0.0f && tail_cutoff < 1) {
-        tail_cutoff = 1;
-    }
 
-    printf("Config: neutrons=%d generations=%d queue_capacity=%d tail_cutoff=%d\n",
-           N, num_generations, queue_capacity, tail_cutoff);
+    printf("Config: neutrons=%d generations=%d queue_capacity=%d cpu_switch_threshold=%d\n",
+           N, num_generations, queue_capacity, CPU_SWITCH_THRESHOLD);
 
     curandState *d_rng_states;
     CUDA_CHECK(cudaMalloc(&d_rng_states, queue_capacity * sizeof(curandState)));
@@ -62,7 +353,6 @@ int main(int argc, char **argv) {
     NeutronSoA d_fission_bank;
     HistoryTallies *d_history_tallies;
     Tallies *d_global_tallies;
-    RegionCorrectionTallies *d_region_correction;
 
     auto alloc_soa = [](NeutronSoA &soa, int capacity) {
         cudaMalloc(&soa.x,            capacity * sizeof(float));
@@ -84,7 +374,6 @@ int main(int argc, char **argv) {
     CUDA_CHECK(cudaMalloc(&d_history_tallies, queue_capacity * sizeof(HistoryTallies)));
     CUDA_CHECK(cudaMalloc(&d_global_tallies, sizeof(Tallies)));
     CUDA_CHECK(cudaMemset(d_global_tallies, 0, sizeof(Tallies)));
-    CUDA_CHECK(cudaMalloc(&d_region_correction, sizeof(RegionCorrectionTallies)));
 
     int *d_move_count, *d_next_move_count, *d_collision_count;
     CUDA_CHECK(cudaMalloc(&d_move_count, sizeof(int)));
@@ -115,15 +404,84 @@ int main(int argc, char **argv) {
     CUDA_CHECK(cudaMemcpy(d_fission_bank_count, &fission_bank_count, sizeof(int), cudaMemcpyHostToDevice));
 
     int completed_generations = 0;
-    double corrected_keff_sum = 0.0;
+    double keff_sum = 0.0;
+    CpuRng cpu_rng(5678UL);
     const int max_iterations = 100000;
     for (int generation = 0; generation < num_generations; ++generation) {
         int zero = 0;
         CUDA_CHECK(cudaMemcpy(d_fission_bank_count, &zero, sizeof(int), cudaMemcpyHostToDevice));
-        CUDA_CHECK(cudaMemset(d_region_correction, 0, sizeof(RegionCorrectionTallies)));
 
         int iter = 0;
-        while (move_count > tail_cutoff) {
+        bool completed_on_cpu = false;
+        while (move_count > 0) {
+            if (move_count <= CPU_SWITCH_THRESHOLD) {
+                CUDA_CHECK(cudaDeviceSynchronize());
+
+                std::vector<CpuParticle> cpu_particles(move_count);
+                CUDA_CHECK(cudaMemcpy(&fission_bank_count, d_fission_bank_count,
+                                      sizeof(int), cudaMemcpyDeviceToHost));
+
+                std::vector<float> host_x(move_count);
+                std::vector<float> host_y(move_count);
+                std::vector<float> host_energy(move_count);
+                std::vector<float> host_ux(move_count);
+                std::vector<float> host_uy(move_count);
+                std::vector<int> host_region(move_count);
+                std::vector<int> host_regionchange(move_count);
+                CUDA_CHECK(cudaMemcpy(host_x.data(), d_move_queue.x,
+                                      move_count * sizeof(float), cudaMemcpyDeviceToHost));
+                CUDA_CHECK(cudaMemcpy(host_y.data(), d_move_queue.y,
+                                      move_count * sizeof(float), cudaMemcpyDeviceToHost));
+                CUDA_CHECK(cudaMemcpy(host_energy.data(), d_move_queue.Energy,
+                                      move_count * sizeof(float), cudaMemcpyDeviceToHost));
+                CUDA_CHECK(cudaMemcpy(host_ux.data(), d_move_queue.ux,
+                                      move_count * sizeof(float), cudaMemcpyDeviceToHost));
+                CUDA_CHECK(cudaMemcpy(host_uy.data(), d_move_queue.uy,
+                                      move_count * sizeof(float), cudaMemcpyDeviceToHost));
+                CUDA_CHECK(cudaMemcpy(host_region.data(), d_move_queue.region,
+                                      move_count * sizeof(int), cudaMemcpyDeviceToHost));
+                CUDA_CHECK(cudaMemcpy(host_regionchange.data(), d_move_queue.regionchange,
+                                      move_count * sizeof(int), cudaMemcpyDeviceToHost));
+
+                std::vector<CpuFissionSite> cpu_fission_sites;
+                cpu_fission_sites.reserve(static_cast<size_t>(move_count) * 3);
+                Tallies cpu_tallies = {};
+                for (int i = 0; i < move_count; ++i) {
+                    cpu_particles[i] = {
+                        host_x[i], host_y[i], host_energy[i], host_ux[i], host_uy[i],
+                        host_region[i], host_regionchange[i]
+                    };
+                    cpu_transport_one(cpu_particles[i], cpu_rng, cpu_fission_sites, cpu_tallies);
+                }
+
+                Tallies global_tallies = {};
+                CUDA_CHECK(cudaMemcpy(&global_tallies, d_global_tallies,
+                                      sizeof(Tallies), cudaMemcpyDeviceToHost));
+                global_tallies.fission += cpu_tallies.fission;
+                global_tallies.capture += cpu_tallies.capture;
+                global_tallies.scattering += cpu_tallies.scattering;
+                global_tallies.leakage += cpu_tallies.leakage;
+                global_tallies.neutrons_produced += cpu_tallies.neutrons_produced;
+                global_tallies.lost_no_surface += cpu_tallies.lost_no_surface;
+
+                copy_cpu_sites_to_fission_bank(
+                    cpu_fission_sites,
+                    d_fission_bank,
+                    fission_bank_capacity,
+                    d_fission_bank_count,
+                    fission_bank_count,
+                    global_tallies
+                );
+                CUDA_CHECK(cudaMemcpy(d_global_tallies, &global_tallies,
+                                      sizeof(Tallies), cudaMemcpyHostToDevice));
+
+                printf("Generation %d CPU tail histories.........=  %d\n", generation, move_count);
+                move_count = 0;
+                CUDA_CHECK(cudaMemcpy(d_move_count, &move_count, sizeof(int), cudaMemcpyHostToDevice));
+                completed_on_cpu = true;
+                break;
+            }
+
             int active_blocks = (move_count + threads - 1) / threads;
 #if DEBUG_TRANSPORT
             if (iter % 100 == 0) {
@@ -161,7 +519,6 @@ int main(int argc, char **argv) {
                 d_next_move_queue, d_next_move_count,
                 d_collision_queue, d_collision_count,
                 d_global_tallies,
-                d_region_correction,
                 queue_capacity,
                 r_fuel
             );
@@ -174,7 +531,6 @@ int main(int argc, char **argv) {
                 d_fission_bank_count,
                 d_history_tallies,
                 d_global_tallies,
-                d_region_correction,
                 queue_capacity
             );
             CUDA_CHECK(cudaGetLastError());
@@ -192,58 +548,14 @@ int main(int argc, char **argv) {
             CUDA_CHECK(cudaMemcpy(&move_count, d_move_count, sizeof(int), cudaMemcpyDeviceToHost));
         }
 
-        if (move_count > 0) {
-            int tail_blocks = (move_count + threads - 1) / threads;
-            tail_correction_kernel<<<tail_blocks, threads>>>(
-                d_move_queue,
-                d_move_count,
-                d_region_correction
-            );
-            CUDA_CHECK(cudaGetLastError());
-            CUDA_CHECK(cudaDeviceSynchronize());
-        }
-
-        RegionCorrectionTallies region_correction = {};
-        CUDA_CHECK(cudaMemcpy(&region_correction, d_region_correction, sizeof(RegionCorrectionTallies), cudaMemcpyDeviceToHost));
-
-        unsigned long long total_completed = 0;
-        unsigned long long total_produced = 0;
-        for (int region = 0; region < NUM_REGIONS; ++region) {
-            total_completed += region_correction.completed[region];
-            total_produced += region_correction.produced[region];
-        }
-
-        double global_observed_yield = total_completed > 0
-            ? static_cast<double>(total_produced) / static_cast<double>(total_completed)
-            : 0.0;
-        double expected_tail_fissions = 0.0;
-        double region_yield[NUM_REGIONS] = {};
-        for (int region = 0; region < NUM_REGIONS; ++region) {
-            region_yield[region] = region_correction.completed[region] > 0
-                ? static_cast<double>(region_correction.produced[region]) /
-                      static_cast<double>(region_correction.completed[region])
-                : global_observed_yield;
-            expected_tail_fissions +=
-                static_cast<double>(region_correction.tail[region]) * region_yield[region];
-        }
-
         CUDA_CHECK(cudaMemcpy(&fission_bank_count, d_fission_bank_count, sizeof(int), cudaMemcpyDeviceToHost));
         double generation_keff = static_cast<double>(fission_bank_count) / static_cast<double>(N);
-        double corrected_fission_count = static_cast<double>(fission_bank_count) +
-            expected_tail_fissions;
-        double corrected_generation_keff = corrected_fission_count / static_cast<double>(N);
         printf("Generation %d Fission Bank Sites.........=  %d\n", generation, fission_bank_count);
-        if (move_count > 0) {
-            printf("Generation %d Truncated Tail Particles...=  %d\n", generation, move_count);
-            printf("Generation %d Tail by Region F/C/M.......=  %u / %u / %u\n", generation,
-                   region_correction.tail[FUEL], region_correction.tail[CLAD], region_correction.tail[MODERATOR]);
-            printf("Generation %d Region Yields F/C/M........=  %.6f / %.6f / %.6f\n", generation,
-                   region_yield[FUEL], region_yield[CLAD], region_yield[MODERATOR]);
-            printf("Generation %d Expected Tail Fissions.....=  %.6f\n", generation, expected_tail_fissions);
-            printf("Generation %d Corrected keff estimate....=  %.12f\n", generation, corrected_generation_keff);
+        if (completed_on_cpu) {
+            printf("Generation %d Completed With CPU Tail.....=  yes\n", generation);
         }
         printf("Generation %d keff estimate..............=  %.12f\n", generation, generation_keff);
-        corrected_keff_sum += corrected_generation_keff;
+        keff_sum += generation_keff;
         completed_generations = generation + 1;
 
         if (generation + 1 >= num_generations || fission_bank_count <= 0) {
@@ -281,7 +593,7 @@ int main(int argc, char **argv) {
     printf("Number of Neutrons.......................=  %d\n", N);
     printf("Completed Generations....................=  %d\n", completed_generations);
     if (completed_generations > 0) {
-        printf("Average Corrected keff...................=  %.12f\n", corrected_keff_sum / static_cast<double>(completed_generations));
+        printf("Average keff.............................=  %.12f\n", keff_sum / static_cast<double>(completed_generations));
     }
     printf("Number of Interactions...................=  %llu\n", interactions);
     printf("Number of Scattering Events..............=  %llu\n", global_tallies.scattering);
@@ -320,7 +632,6 @@ int main(int argc, char **argv) {
     CUDA_CHECK(cudaFree(d_sort_idx));
     CUDA_CHECK(cudaFree(d_sort_keys));
     CUDA_CHECK(cudaFree(d_fission_bank_count));
-    CUDA_CHECK(cudaFree(d_region_correction));
     CUDA_CHECK(cudaFree(d_global_tallies));
     free_soa(d_fission_bank);
     CUDA_CHECK(cudaFree(d_history_tallies));

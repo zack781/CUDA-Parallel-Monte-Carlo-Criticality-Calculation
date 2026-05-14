@@ -69,23 +69,6 @@ __device__ int reserve_queue_slots(int *count, int requested, int capacity,
   }
 }
 
-__device__ int normalized_region(int region) {
-  if (region < 0 || region >= NUM_REGIONS) {
-    return MODERATOR;
-  }
-  return region;
-}
-
-__device__ void add_completed_region(RegionCorrectionTallies *region_correction,
-                                     int region) {
-  atomicAdd(&region_correction->completed[normalized_region(region)], 1ULL);
-}
-
-__device__ void add_produced_region(RegionCorrectionTallies *region_correction,
-                                    int region, unsigned long long produced) {
-  atomicAdd(&region_correction->produced[normalized_region(region)], produced);
-}
-
 } // namespace
 
 __global__ void move_kernel(
@@ -96,7 +79,6 @@ __global__ void move_kernel(
     NeutronSoA collision_queue,
     int *collision_count,
     Tallies *global_tallies,
-    RegionCorrectionTallies *region_correction,
     int queue_capacity,
     float r_fuel
 ) {
@@ -153,7 +135,6 @@ __global__ void move_kernel(
 
     if (surface == SURFACE_NONE) {
         atomicAdd(&global_tallies->lost_no_surface, 1ULL);
-        add_completed_region(region_correction, region);
 #if DEBUG_TRANSPORT
         float radius = sqrtf(x * x + y * y);
         float r_clad_out = DEFAULT_GEOMETRY.r_clad_out;
@@ -237,7 +218,6 @@ __global__ void move_kernel(
             next_move_queue.rng_state[idx]   = local_state;
         } else {
             atomicAdd(&global_tallies->queue_overflow, 1ULL);
-            add_completed_region(region_correction, region);
         }
     } else {
         x += d * ux;
@@ -256,7 +236,6 @@ __global__ void move_kernel(
             collision_queue.rng_state[idx]   = local_state;
         } else {
             atomicAdd(&global_tallies->queue_overflow, 1ULL);
-            add_completed_region(region_correction, region);
         }
     }
 }
@@ -268,7 +247,6 @@ __global__ void collision_kernel(NeutronSoA collision_queue,
                                  int *fission_bank_count,
                                  HistoryTallies *history_tallies,
                                  Tallies *global_tallies,
-                                 RegionCorrectionTallies *region_correction,
                                  int queue_capacity) {
   int i = blockIdx.x * blockDim.x + threadIdx.x;
   if (i >= *collision_count)
@@ -287,7 +265,6 @@ __global__ void collision_kernel(NeutronSoA collision_queue,
 
   XS cross_section = get_cross_sections(Energy, region);
   if (cross_section.sig_t <= 0.0f) {
-    add_completed_region(region_correction, region);
     history_tallies[i] = local_tallies;
     return;
   }
@@ -302,9 +279,6 @@ __global__ void collision_kernel(NeutronSoA collision_queue,
 
     int fission_neutrons = sample_fission_multiplicity(&local_state);
     local_tallies.neutrons_produced = fission_neutrons;
-    add_completed_region(region_correction, region);
-    add_produced_region(region_correction, region,
-                        static_cast<unsigned long long>(fission_neutrons));
 
     unsigned int active_fission_mask = __activemask();
     unsigned int fission_lane_mask =
@@ -361,7 +335,6 @@ __global__ void collision_kernel(NeutronSoA collision_queue,
   // Capture: no particles added.
   else if (reaction_sample <= fission_probability + capture_probability) {
     local_tallies.capture = 1;
-    add_completed_region(region_correction, region);
   }
 
   // Scatter: every active lane adds one neutron.
@@ -458,15 +431,6 @@ __global__ void reset_counts_kernel(int *first_count, int *second_count) {
     *first_count = 0;
     *second_count = 0;
   }
-}
-
-__global__ void tail_correction_kernel(NeutronSoA tail_queue,
-                                       const int *tail_count,
-                                       RegionCorrectionTallies *region_correction) {
-  int i = blockIdx.x * blockDim.x + threadIdx.x;
-  if (i >= *tail_count) return;
-  int region = normalized_region(tail_queue.region[i]);
-  atomicAdd(&region_correction->tail[region], 1u);
 }
 
 __global__ void gather_kernel(NeutronSoA src, const int *indices, int count, NeutronSoA dst) {
