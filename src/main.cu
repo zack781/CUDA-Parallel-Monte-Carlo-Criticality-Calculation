@@ -6,6 +6,7 @@
 #include "rng.cu"
 #include "fission_bank.cu"
 #include <cstdlib>
+#include <cstdio>
 
 #define DEFAULT_NEUTRONS 10000
 #define DEFAULT_GENERATIONS 10
@@ -21,17 +22,23 @@ int main(int argc, char **argv) {
     int N = argc > 1 ? std::atoi(argv[1]) : DEFAULT_NEUTRONS;
     int num_generations = argc > 2 ? std::atoi(argv[2]) : DEFAULT_GENERATIONS;
     int batch_size = argc > 3 ? std::atoi(argv[3]) : DEFAULT_BATCH_SIZE;
+    float tail_fraction = argc > 4 ? std::atof(argv[4]) : 0.0f;
 
-    if (N <= 0 || num_generations <= 0 || batch_size <= 0) {
-        printf("Usage: %s [neutrons] [generations] [batch_size]\n", argv[0]);
+    if (N <= 0 || num_generations <= 0 || batch_size <= 0 ||
+        tail_fraction < 0.0f || tail_fraction >= 1.0f || argc > 5) {
+        printf("Usage: %s [neutrons] [generations] [batch_size] [tail_fraction]\n", argv[0]);
         return 1;
     }
 
     float r_fuel = FUEL_RADIUS;
     int queue_capacity = N * QUEUE_MULTIPLIER;
+    int tail_cutoff = static_cast<int>(tail_fraction * N);
+    if (tail_fraction > 0.0f && tail_cutoff < 1) {
+        tail_cutoff = 1;
+    }
 
-    printf("Config: neutrons=%d generations=%d batch_size=%d queue_capacity=%d\n",
-           N, num_generations, batch_size, queue_capacity);
+    printf("Config: neutrons=%d generations=%d batch_size=%d queue_capacity=%d tail_cutoff=%d\n",
+           N, num_generations, batch_size, queue_capacity, tail_cutoff);
 
     curandState *d_rng_states;
     Neutron *d_source_particles;
@@ -54,6 +61,7 @@ int main(int argc, char **argv) {
     Neutron *d_fission_bank;
     HistoryTallies *d_history_tallies;
     Tallies *d_global_tallies;
+    RegionCorrectionTallies *d_region_correction;
 
     CUDA_CHECK(cudaMalloc(&d_move_queue, queue_capacity * sizeof(Neutron)));
     CUDA_CHECK(cudaMalloc(&d_next_move_queue, queue_capacity * sizeof(Neutron)));
@@ -63,6 +71,7 @@ int main(int argc, char **argv) {
     CUDA_CHECK(cudaMalloc(&d_history_tallies, queue_capacity * sizeof(HistoryTallies)));
     CUDA_CHECK(cudaMalloc(&d_global_tallies, sizeof(Tallies)));
     CUDA_CHECK(cudaMemset(d_global_tallies, 0, sizeof(Tallies)));
+    CUDA_CHECK(cudaMalloc(&d_region_correction, sizeof(RegionCorrectionTallies)));
 
     int *d_move_count, *d_next_move_count, *d_collision_count;
     CUDA_CHECK(cudaMalloc(&d_move_count, sizeof(int)));
@@ -87,13 +96,15 @@ int main(int argc, char **argv) {
     CUDA_CHECK(cudaMemcpy(d_fission_bank_count, &fission_bank_count, sizeof(int), cudaMemcpyHostToDevice));
 
     int completed_generations = 0;
+    double corrected_keff_sum = 0.0;
     const int max_iterations = 100000;
     for (int generation = 0; generation < num_generations; ++generation) {
         int zero = 0;
         CUDA_CHECK(cudaMemcpy(d_fission_bank_count, &zero, sizeof(int), cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMemset(d_region_correction, 0, sizeof(RegionCorrectionTallies)));
 
         int iter = 0;
-        while (move_count > 0) {
+        while (move_count > tail_cutoff) {
             int active_blocks = (move_count + threads - 1) / threads;
 #if DEBUG_TRANSPORT
             if (iter % 100 == 0) {
@@ -106,13 +117,14 @@ int main(int argc, char **argv) {
             }
 
             for (int step = 0; step < batch_size && iter < max_iterations; ++step, ++iter) {
-                CUDA_CHECK(cudaMemcpy(d_next_move_count, &zero, sizeof(int), cudaMemcpyHostToDevice));
-                CUDA_CHECK(cudaMemcpy(d_collision_count, &zero, sizeof(int), cudaMemcpyHostToDevice));
+                reset_counts_kernel<<<1, 1>>>(d_next_move_count, d_collision_count);
+                CUDA_CHECK(cudaGetLastError());
                 move_kernel<<<active_blocks, threads>>>(
                     d_move_queue, d_move_count,
                     d_next_move_queue, d_next_move_count,
                     d_collision_queue, d_collision_count,
                     d_global_tallies,
+                    d_region_correction,
                     queue_capacity,
                     r_fuel
                 );
@@ -125,6 +137,7 @@ int main(int argc, char **argv) {
                     d_fission_bank_count,
                     d_history_tallies,
                     d_global_tallies,
+                    d_region_correction,
                     queue_capacity
                 );
                 CUDA_CHECK(cudaGetLastError());
@@ -139,13 +152,60 @@ int main(int argc, char **argv) {
             }
 
             CUDA_CHECK(cudaMemcpy(&move_count, d_move_count, sizeof(int), cudaMemcpyDeviceToHost));
-            CUDA_CHECK(cudaMemcpy(d_collision_count, &zero, sizeof(int), cudaMemcpyHostToDevice));
+        }
+
+        if (move_count > 0) {
+            int tail_blocks = (move_count + threads - 1) / threads;
+            tail_correction_kernel<<<tail_blocks, threads>>>(
+                d_move_queue,
+                d_move_count,
+                d_region_correction
+            );
+            CUDA_CHECK(cudaGetLastError());
+            CUDA_CHECK(cudaDeviceSynchronize());
+        }
+
+        RegionCorrectionTallies region_correction = {};
+        CUDA_CHECK(cudaMemcpy(&region_correction, d_region_correction, sizeof(RegionCorrectionTallies), cudaMemcpyDeviceToHost));
+
+        unsigned long long total_completed = 0;
+        unsigned long long total_produced = 0;
+        for (int region = 0; region < NUM_REGIONS; ++region) {
+            total_completed += region_correction.completed[region];
+            total_produced += region_correction.produced[region];
+        }
+
+        double global_observed_yield = total_completed > 0
+            ? static_cast<double>(total_produced) / static_cast<double>(total_completed)
+            : 0.0;
+        double expected_tail_fissions = 0.0;
+        double region_yield[NUM_REGIONS] = {};
+        for (int region = 0; region < NUM_REGIONS; ++region) {
+            region_yield[region] = region_correction.completed[region] > 0
+                ? static_cast<double>(region_correction.produced[region]) /
+                      static_cast<double>(region_correction.completed[region])
+                : global_observed_yield;
+            expected_tail_fissions +=
+                static_cast<double>(region_correction.tail[region]) * region_yield[region];
         }
 
         CUDA_CHECK(cudaMemcpy(&fission_bank_count, d_fission_bank_count, sizeof(int), cudaMemcpyDeviceToHost));
         double generation_keff = static_cast<double>(fission_bank_count) / static_cast<double>(N);
+        double corrected_fission_count = static_cast<double>(fission_bank_count) +
+            expected_tail_fissions;
+        double corrected_generation_keff = corrected_fission_count / static_cast<double>(N);
         printf("Generation %d Fission Bank Sites.........=  %d\n", generation, fission_bank_count);
+        if (move_count > 0) {
+            printf("Generation %d Truncated Tail Particles...=  %d\n", generation, move_count);
+            printf("Generation %d Tail by Region F/C/M.......=  %u / %u / %u\n", generation,
+                   region_correction.tail[FUEL], region_correction.tail[CLAD], region_correction.tail[MODERATOR]);
+            printf("Generation %d Region Yields F/C/M........=  %.6f / %.6f / %.6f\n", generation,
+                   region_yield[FUEL], region_yield[CLAD], region_yield[MODERATOR]);
+            printf("Generation %d Expected Tail Fissions.....=  %.6f\n", generation, expected_tail_fissions);
+            printf("Generation %d Corrected keff estimate....=  %.12f\n", generation, corrected_generation_keff);
+        }
         printf("Generation %d keff estimate..............=  %.12f\n", generation, generation_keff);
+        corrected_keff_sum += corrected_generation_keff;
         completed_generations = generation + 1;
 
         if (generation + 1 >= num_generations || fission_bank_count <= 0) {
@@ -164,8 +224,8 @@ int main(int argc, char **argv) {
 
         move_count = N;
         CUDA_CHECK(cudaMemcpy(d_move_count, &move_count, sizeof(int), cudaMemcpyHostToDevice));
-        CUDA_CHECK(cudaMemcpy(d_next_move_count, &zero, sizeof(int), cudaMemcpyHostToDevice));
-        CUDA_CHECK(cudaMemcpy(d_collision_count, &zero, sizeof(int), cudaMemcpyHostToDevice));
+        reset_counts_kernel<<<1, 1>>>(d_next_move_count, d_collision_count);
+        CUDA_CHECK(cudaGetLastError());
     }
 
     Tallies global_tallies = {};
@@ -182,6 +242,9 @@ int main(int argc, char **argv) {
 
     printf("Number of Neutrons.......................=  %d\n", N);
     printf("Completed Generations....................=  %d\n", completed_generations);
+    if (completed_generations > 0) {
+        printf("Average Corrected keff...................=  %.12f\n", corrected_keff_sum / static_cast<double>(completed_generations));
+    }
     printf("Number of Interactions...................=  %llu\n", interactions);
     printf("Number of Scattering Events..............=  %llu\n", global_tallies.scattering);
     printf("Number of Capture Events.................=  %llu\n", global_tallies.capture);
@@ -206,6 +269,7 @@ int main(int argc, char **argv) {
 #endif
 
     CUDA_CHECK(cudaFree(d_fission_bank_count));
+    CUDA_CHECK(cudaFree(d_region_correction));
     CUDA_CHECK(cudaFree(d_global_tallies));
     CUDA_CHECK(cudaFree(d_fission_bank));
     CUDA_CHECK(cudaFree(d_history_tallies));
