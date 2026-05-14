@@ -292,6 +292,15 @@ __global__ void compact_queue_kernel(
     NeutronSoA output_queue
 );
 
+// Reorder all SoA fields from src into dst using a permutation index array.
+// dst[i] = src[indices[i]] for i in [0, count).
+__global__ void gather_kernel(
+    NeutronSoA src,
+    const int *indices,
+    int count,
+    NeutronSoA dst
+);
+
 __global__ void normalize_bank_kernel();
 
 __global__ void entropy_tally_kernel();

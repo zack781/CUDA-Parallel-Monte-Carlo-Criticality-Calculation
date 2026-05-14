@@ -425,3 +425,17 @@ __global__ void compact_queue_kernel(NeutronSoA input_queue,
     output_queue.rng_state[o]    = input_queue.rng_state[i];
   }
 }
+
+__global__ void gather_kernel(NeutronSoA src, const int *indices, int count, NeutronSoA dst) {
+  int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i >= count) return;
+  int j = indices[i];
+  dst.x[i]            = src.x[j];
+  dst.y[i]            = src.y[j];
+  dst.Energy[i]       = src.Energy[j];
+  dst.ux[i]           = src.ux[j];
+  dst.uy[i]           = src.uy[j];
+  dst.region[i]       = src.region[j];
+  dst.regionchange[i] = src.regionchange[j];
+  dst.rng_state[i]    = src.rng_state[j];
+}

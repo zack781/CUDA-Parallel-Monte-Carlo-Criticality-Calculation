@@ -6,6 +6,11 @@
 #include "rng.cu"
 #include "fission_bank.cu"
 #include <cstdlib>
+#include <thrust/sort.h>
+#include <thrust/sequence.h>
+#include <thrust/copy.h>
+#include <thrust/execution_policy.h>
+#include <thrust/device_ptr.h>
 
 #define DEFAULT_NEUTRONS 10000
 #define DEFAULT_GENERATIONS 10
@@ -82,6 +87,14 @@ int main(int argc, char **argv) {
     int fission_bank_count = 0;
     CUDA_CHECK(cudaMalloc(&d_fission_bank_count, sizeof(int)));
 
+    // Scratch buffers for sorting move_queue by region before each move_kernel launch.
+    // d_sort_keys: copy of region values used as sort key (so the original array is untouched).
+    // d_sort_idx:  permutation produced by the sort, consumed by gather_kernel.
+    int *d_sort_keys;
+    int *d_sort_idx;
+    CUDA_CHECK(cudaMalloc(&d_sort_keys, queue_capacity * sizeof(int)));
+    CUDA_CHECK(cudaMalloc(&d_sort_idx,  queue_capacity * sizeof(int)));
+
 
     int move_count = 0;
 
@@ -115,6 +128,29 @@ int main(int argc, char **argv) {
             for (int step = 0; step < batch_size && iter < max_iterations; ++step, ++iter) {
                 CUDA_CHECK(cudaMemcpyAsync(d_next_move_count, &zero, sizeof(int), cudaMemcpyHostToDevice));
                 CUDA_CHECK(cudaMemcpyAsync(d_collision_count, &zero, sizeof(int), cudaMemcpyHostToDevice));
+
+                // Sort move_queue by region so each warp handles a single region,
+                // eliminating the three-way branch divergence in move_kernel.
+                // We copy region values to a scratch key buffer first so the original
+                // SoA field is untouched; the resulting permutation in d_sort_idx is
+                // then applied by gather_kernel, which writes sorted output into
+                // d_next_move_queue. A pointer swap makes that the new move_queue.
+                {
+                    thrust::device_ptr<int> keys(d_sort_keys);
+                    thrust::device_ptr<int> idx(d_sort_idx);
+                    thrust::copy(thrust::device,
+                        thrust::device_ptr<int>(d_move_queue.region),
+                        thrust::device_ptr<int>(d_move_queue.region) + move_count,
+                        keys);
+                    thrust::sequence(thrust::device, idx, idx + move_count);
+                    thrust::sort_by_key(thrust::device, keys, keys + move_count, idx);
+                    gather_kernel<<<active_blocks, threads>>>(
+                        d_move_queue, d_sort_idx, move_count, d_next_move_queue);
+                    NeutronSoA tmp  = d_move_queue;
+                    d_move_queue    = d_next_move_queue;
+                    d_next_move_queue = tmp;
+                }
+
                 move_kernel<<<active_blocks, threads>>>(
                     d_move_queue, d_move_count,
                     d_next_move_queue, d_next_move_count,
@@ -223,6 +259,8 @@ int main(int argc, char **argv) {
         cudaFree(soa.rng_state);
     };
 
+    CUDA_CHECK(cudaFree(d_sort_idx));
+    CUDA_CHECK(cudaFree(d_sort_keys));
     CUDA_CHECK(cudaFree(d_fission_bank_count));
     CUDA_CHECK(cudaFree(d_global_tallies));
     free_soa(d_fission_bank);
